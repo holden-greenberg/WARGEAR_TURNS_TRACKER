@@ -2,8 +2,8 @@ name: Check WarGear Turns
 
 on:
   schedule:
-    # Checks every 15 minutes automatically
-    - cron: '*/15 * * * *'
+    # Checks every 5 minutes automatically
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
