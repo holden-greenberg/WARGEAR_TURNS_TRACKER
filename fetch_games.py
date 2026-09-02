@@ -14,6 +14,11 @@ PLAYERS = [
 API_BASE = "https://api.wargear.net/api-docs/GetGameList/player"
 active_games = {}
 
+# Disguise the automated script as a standard Google Chrome browser
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+}
+
 for player in PLAYERS:
     params = {
         'api_key': API_KEY,
@@ -22,13 +27,13 @@ for player in PLAYERS:
     }
     
     try:
-        response = requests.get(API_BASE, params=params)
+        # Pass the headers into the GET request
+        response = requests.get(API_BASE, params=params, headers=headers)
         response.raise_for_status()
         data = response.json()
         
         print(f"\n--- Fetching data for {player} ---")
         
-        # Ensure data is a list before iterating
         if isinstance(data, list):
             for item in data:
                 game = item.get("games", {})
@@ -38,10 +43,8 @@ for player in PLAYERS:
                 game_id = game.get("gameid")
                 status = game.get("gamestatus", "")
                 
-                # Print the exact status to the GitHub Actions log
                 print(f"Found Game ID: {game_id} | Status: '{status}'")
                 
-                # Case-insensitive check
                 if status.lower() in ["live", "initial placement", "territory select"]:
                     active_games[game_id] = game
         else:
