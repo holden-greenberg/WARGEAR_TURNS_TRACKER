@@ -11,7 +11,7 @@ PLAYERS = [
     "HoldenGreenberg", "harambae", "jgliks", "somethingpete", "nico12"
 ]
 
-API_BASE = "https://api.wargear.net/api-docs/GetGameList/player"
+API_BASE = "https://api.wargear.net/api/GetGameList/player"
 active_games = {}
 
 # Disguise the automated script as a standard Google Chrome browser
