@@ -1,16 +1,16 @@
-name: Fetch WarGear Games
+name: Check WarGear Turns
 
 on:
   schedule:
-    # Runs every 15 minutes. 
+    # Checks every 15 minutes automatically
     - cron: '*/15 * * * *'
-  workflow_dispatch: # This allows you to click a button to run it manually
+  workflow_dispatch:
 
 jobs:
-  update-data:
+  check-turns:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # This gives the action permission to save the JSON file
+      contents: write
 
     steps:
     - name: Checkout repository
@@ -24,17 +24,16 @@ jobs:
     - name: Install dependencies
       run: pip install -r requirements.txt
 
-    - name: Fetch game data
-      # This securely passes your key (wg_ro_2ca44f97b691084ccad49dde) from the secrets we set up earlier[cite: 1]
+    - name: Run turn checker
       env:
-        WARGEAR_API_KEY: ${{ secrets.WARGEAR_API_KEY }}
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        PLAYERS_CONFIG: ${{ secrets.PLAYERS_CONFIG }}
       run: python fetch_games.py
 
-    - name: Commit and push changes
+    - name: Commit and push turn state
       run: |
         git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add data/games.json
-        # If there are no new turns, it skips committing to prevent errors
-        git commit -m "Update active games data" || echo "No changes to commit"
+        git config --local user.name "WarGear Turn Bot"
+        git add data/last_turns.json
+        git diff --staged --quiet || git commit -m "Update turn tracking state"
         git push
