@@ -2,19 +2,22 @@ import os
 import json
 import time
 import requests
+from datetime import datetime
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 PLAYERS_CONFIG_RAW = os.environ.get("PLAYERS_CONFIG", "[]")
 
 try:
     players = json.loads(PLAYERS_CONFIG_RAW)
-except Exception as e:
-    print(f"Error parsing PLAYERS_CONFIG: {e}")
+except Exception:
     players = []
 
 STATE_FILE = "data/last_turns.json"
 DASHBOARD_FILE = "data/dashboard.json"
 os.makedirs("data", exist_ok=True)
+
+# Define Tracker Era start: September 2, 2026, 00:00:00 UTC
+TRACKER_ERA_START = int(datetime(2026, 9, 2, 0, 0, 0).timestamp())
 
 if os.path.exists(STATE_FILE):
     try:
@@ -27,9 +30,7 @@ else:
 
 new_state = {}
 all_games = {}
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-}
+headers = {'User-Agent': 'Mozilla/5.0'}
 
 for player in players:
     name = player.get("name", "Player")
@@ -39,11 +40,9 @@ for player in players:
     if not api_key:
         continue
 
-    print(f"\n--- Checking games & turns for {name} ---")
     current_player_turns = {}
     prev_player_turns = previous_state.get(name, {})
 
-    # Fetch both Live and Finished games using pagination
     for view_type in ["Live", "Finished"]:
         page = 1
         while True:
@@ -55,7 +54,6 @@ for player in players:
                     headers=headers,
                     timeout=20
                 )
-                
                 if resp.status_code != 200:
                     break
 
@@ -69,10 +67,17 @@ for player in players:
                     if not game_id:
                         continue
 
-                    # Deduplicate into master game collection
+                    status = game.get("gamestatus")
+                    
+                    # Enforce Tracker Era filter for finished games to shrink payload size
+                    if status == "Finished":
+                        endstamp = game.get("endstamp", 0) or 0
+                        if endstamp < TRACKER_ERA_START:
+                            continue  # Skip pre-Tracker Era finished games
+
                     all_games[game_id] = game
 
-                    # Only check for active Discord turn alerts if the game is Live
+                    # Check turn notifications for Live games
                     if view_type == "Live":
                         current_turn = game.get("current_turn", [])
                         turn_names = []
@@ -83,35 +88,26 @@ for player in players:
                                 elif isinstance(t, str):
                                     turn_names.append(t.lower())
 
-                        is_player_turn = name.lower() in turn_names
-                        turn_stamp = str(game.get("turnstamp") or game.get("createstamp") or "active")
-
-                        if is_player_turn:
+                        if name.lower() in turn_names:
+                            turn_stamp = str(game.get("turnstamp") or game.get("createstamp") or "active")
                             current_player_turns[game_id] = turn_stamp
-                            game_name = game.get("name", "WarGear Game")
-
+                            
                             if game_id not in prev_player_turns or prev_player_turns[game_id] != turn_stamp:
-                                print(f"⚔️ New turn for {name} in '{game_name}'! Sending Discord alert...")
-                                mention = f"<@{discord_id}>" if discord_id else f"**{name}**"
-                                game_url = f"https://www.wargear.net/games/player/{game_id}"
-
                                 if DISCORD_WEBHOOK_URL:
-                                    msg = {
-                                        "content": f"⚔️ {mention}, it's your turn in **{game_name}**!\n👉 Play: {game_url}"
-                                    }
+                                    mention = f"<@{discord_id}>" if discord_id else f"**{name}**"
+                                    game_url = f"https://www.wargear.net/games/player/{game_id}"
+                                    msg = {"content": f"⚔️ {mention}, it's your turn in **{game.get('name', 'WarGear Game')}**!\n👉 Play: {game_url}"}
                                     try:
                                         requests.post(DISCORD_WEBHOOK_URL, json=msg, timeout=10)
-                                    except Exception as post_err:
-                                        print(f"Failed to post to Discord: {post_err}")
+                                    except Exception:
+                                        pass
 
                 if len(data) < 5:
                     break
                 page += 1
-
-            except Exception as e:
-                print(f"Error fetching {view_type} games page {page} for {name}: {e}")
+            except Exception:
                 break
-            
+                
     new_state[name] = current_player_turns
 
 with open(STATE_FILE, "w") as f:
@@ -125,4 +121,4 @@ dashboard_payload = {
 with open(DASHBOARD_FILE, "w") as f:
     json.dump(dashboard_payload, f, indent=2)
 
-print(f"\nDone! Saved {len(all_games)} total unique games to {DASHBOARD_FILE}.")
+print(f"Saved {len(all_games)} games.")
