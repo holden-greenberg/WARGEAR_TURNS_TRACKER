@@ -16,9 +16,10 @@ STATE_FILE = "data/last_turns.json"
 DASHBOARD_FILE = "data/dashboard.json"
 os.makedirs("data", exist_ok=True)
 
-# Define Tracker Era start: September 2, 2026, 00:00:00 UTC
+# Tracker Era start: September 2, 2026, 00:00:00 UTC
 TRACKER_ERA_START = int(datetime(2026, 9, 2, 0, 0, 0).timestamp())
 
+# Load previous turn states to prevent duplicate pings
 if os.path.exists(STATE_FILE):
     try:
         with open(STATE_FILE, "r") as f:
@@ -69,16 +70,16 @@ for player in players:
 
                     status = game.get("gamestatus")
                     
-                    # Enforce Tracker Era filter for finished games to shrink payload size
+                    # Enforce Tracker Era filter for finished games to keep payload clean
                     if status == "Finished":
                         endstamp = game.get("endstamp", 0) or 0
                         if endstamp < TRACKER_ERA_START:
-                            continue  # Skip pre-Tracker Era finished games
+                            continue
 
                     all_games[game_id] = game
 
-                    # Check turn notifications for Live games
-                    if view_type == "Live":
+                    # Check turn notifications ONLY for Live games where a turnstamp exists
+                    if view_type == "Live" and status == "Live":
                         current_turn = game.get("current_turn", [])
                         turn_names = []
                         if isinstance(current_turn, list):
@@ -89,27 +90,33 @@ for player in players:
                                     turn_names.append(t.lower())
 
                         if name.lower() in turn_names:
-                            turn_stamp = str(game.get("turnstamp") or game.get("createstamp") or "active")
-                            current_player_turns[game_id] = turn_stamp
-                            
-                            if game_id not in prev_player_turns or prev_player_turns[game_id] != turn_stamp:
-                                if DISCORD_WEBHOOK_URL:
-                                    mention = f"<@{discord_id}>" if discord_id else f"**{name}**"
-                                    game_url = f"https://www.wargear.net/games/player/{game_id}"
-                                    msg = {"content": f"⚔️ {mention}, it's your turn in **{game.get('name', 'WarGear Game')}**!\n👉 Play: {game_url}"}
-                                    try:
-                                        requests.post(DISCORD_WEBHOOK_URL, json=msg, timeout=10)
-                                    except Exception:
-                                        pass
+                            # Use the official game turnstamp so it only changes when a real turn changes
+                            turn_stamp = game.get("turnstamp")
+                            if turn_stamp:
+                                current_player_turns[game_id] = str(turn_stamp)
+                                
+                                # Only alert if this exact turn timestamp hasn't been pinged yet
+                                if prev_player_turns.get(game_id) != str(turn_stamp):
+                                    if DISCORD_WEBHOOK_URL:
+                                        mention = f"<@{discord_id}>" if discord_id else f"**{name}**"
+                                        game_url = f"https://www.wargear.net/games/player/{game_id}"
+                                        msg = {"content": f"⚔️ {mention}, it's your turn in **{game.get('name', 'WarGear Game')}**!\n👉 Play: {game_url}"}
+                                        try:
+                                            requests.post(DISCORD_WEBHOOK_URL, json=msg, timeout=10)
+                                            print(f"Sent Discord alert for {name} in game {game_id}")
+                                        except Exception as e:
+                                            print(f"Discord webhook error: {e}")
 
                 if len(data) < 5:
                     break
                 page += 1
-            except Exception:
+            except Exception as e:
+                print(f"Error fetching page {page} for {name}: {e}")
                 break
                 
     new_state[name] = current_player_turns
 
+# Save updated state so future runs recognize current turns have already been alerted
 with open(STATE_FILE, "w") as f:
     json.dump(new_state, f, indent=2)
 
@@ -121,4 +128,4 @@ dashboard_payload = {
 with open(DASHBOARD_FILE, "w") as f:
     json.dump(dashboard_payload, f, indent=2)
 
-print(f"Saved {len(all_games)} games.")
+print(f"Saved {len(all_games)} games to dashboard.")
