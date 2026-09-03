@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import requests
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -12,15 +13,10 @@ except Exception as e:
     players = []
 
 STATE_FILE = "data/last_turns.json"
+DASHBOARD_FILE = "data/dashboard.json"
 os.makedirs("data", exist_ok=True)
 
-# State structure:
-# {
-#   "HoldenGreenberg": {
-#       "81541156": "1725315000",
-#       "81540266": "1725318000"
-#   }
-# }
+# Load previous turns state for Discord notifications
 if os.path.exists(STATE_FILE):
     try:
         with open(STATE_FILE, "r") as f:
@@ -31,6 +27,7 @@ else:
     previous_state = {}
 
 new_state = {}
+all_games = {}
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
@@ -41,73 +38,90 @@ for player in players:
     discord_id = player.get("discord_id")
 
     if not api_key:
-        print(f"Skipping {name}: No API key provided.")
         continue
 
-    print(f"\n--- Checking turns for {name} ---")
+    print(f"\n--- Checking games & turns for {name} ---")
     current_player_turns = {}
     prev_player_turns = previous_state.get(name, {})
 
-    url = "https://www.wargear.net/rest/GetCurrentTurns"
+    # 1. Fetch all active games for this player (pulls private & public)
+    url = "https://www.wargear.net/rest/GetGameList/my"
     try:
-        resp = requests.get(url, params={"api_key": api_key, "format": "json"}, headers=headers)
+        resp = requests.get(
+            url,
+            params={"api_key": api_key, "viewselector": "Live", "format": "json"},
+            headers=headers,
+            timeout=20
+        )
         resp.raise_for_status()
-        turns_data = resp.json()
+        data = resp.json()
 
-        if not turns_data or not isinstance(turns_data, list):
-            print(f"No active turns for {name}.")
+        if not data or not isinstance(data, list):
+            print(f"No active games returned for {name}.")
             new_state[name] = {}
             continue
 
-        # Each game in the list is processed independently
-        for item in turns_data:
-            turn = item.get("turns") if isinstance(item, dict) and "turns" in item else item
-            game_id = str(turn.get("gameid", ""))
-            game_name = turn.get("name", "WarGear Game")
-            board_name = turn.get("boardname", "")
-            turn_stamp = str(turn.get("turnstamp") or turn.get("createstamp") or "active")
-
+        for item in data:
+            game = item.get("games") if isinstance(item, dict) and "games" in item else item
+            game_id = str(game.get("gameid", ""))
             if not game_id:
                 continue
 
-            # Record this game and timestamp for the current run
-            current_player_turns[game_id] = turn_stamp
+            # Deduplicate into master game collection
+            if game_id not in all_games:
+                all_games[game_id] = game
 
-            # Alert if:
-            # 1. This game was not waiting on the player during the last check, OR
-            # 2. A new round/turn started in this game (turn_stamp changed)
-            if game_id not in prev_player_turns or prev_player_turns[game_id] != turn_stamp:
-                print(f"New turn detected for {name} in '{game_name}' ({game_id})! Sending Discord alert...")
-                
-                mention = f"<@{discord_id}>" if discord_id else f"**{name}**"
-                board_display = f" on map **{board_name}**" if board_name else ""
-                game_url = f"https://www.wargear.net/games/player/{game_id}"
-                
-                message = {
-                    "content": (
-                        f"⚔️ {mention}, it's your turn in **{game_name}**{board_display}!\n"
-                        f"👉 Take your turn: {game_url}"
-                    )
-                }
+            # Check if this player is on the clock in this game
+            current_turn = game.get("current_turn", [])
+            turn_names = []
+            if isinstance(current_turn, list):
+                for t in current_turn:
+                    if isinstance(t, dict):
+                        turn_names.append(t.get("name", "").lower())
+                    elif isinstance(t, str):
+                        turn_names.append(t.lower())
 
-                if DISCORD_WEBHOOK_URL:
-                    try:
-                        post_resp = requests.post(DISCORD_WEBHOOK_URL, json=message)
-                        post_resp.raise_for_status()
-                    except Exception as discord_err:
-                        print(f"Failed to post to Discord: {discord_err}")
-            else:
-                print(f"{name} is still on the clock in '{game_name}' ({game_id}). Skipping notification.")
+            is_player_turn = name.lower() in turn_names
+            turn_stamp = str(game.get("turnstamp") or game.get("createstamp") or "active")
+
+            if is_player_turn:
+                current_player_turns[game_id] = turn_stamp
+                game_name = game.get("name", "WarGear Game")
+                board_name = game.get("boardname", "")
+
+                # Alert Discord if it's newly their turn
+                if game_id not in prev_player_turns or prev_player_turns[game_id] != turn_stamp:
+                    print(f"⚔️ New turn for {name} in '{game_name}'! Sending Discord alert...")
+                    mention = f"<@{discord_id}>" if discord_id else f"**{name}**"
+                    board_info = f" on **{board_name}**" if board_name else ""
+                    game_url = f"https://www.wargear.net/games/player/{game_id}"
+
+                    if DISCORD_WEBHOOK_URL:
+                        msg = {
+                            "content": f"⚔️ {mention}, it's your turn in **{game_name}**{board_info}!\n👉 Play: {game_url}"
+                        }
+                        try:
+                            requests.post(DISCORD_WEBHOOK_URL, json=msg, timeout=10)
+                        except Exception as post_err:
+                            print(f"Failed to post to Discord: {post_err}")
 
         new_state[name] = current_player_turns
 
     except Exception as e:
-        print(f"Error fetching turns for {name}: {e}")
-        # Preserve previous state on network failure to prevent re-alerting on the next run
+        print(f"Error fetching games for {name}: {e}")
         new_state[name] = prev_player_turns
 
-# Save updated game state per player
+# Save notification state
 with open(STATE_FILE, "w") as f:
     json.dump(new_state, f, indent=2)
 
-print("\nTurn state successfully saved.")
+# Save aggregated dashboard payload
+dashboard_payload = {
+    "last_updated": int(time.time()),
+    "total_games": len(all_games),
+    "games": list(all_games.values())
+}
+with open(DASHBOARD_FILE, "w") as f:
+    json.dump(dashboard_payload, f, indent=2)
+
+print(f"\nDone! Saved {len(all_games)} games to {DASHBOARD_FILE}.")
