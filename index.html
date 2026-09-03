@@ -74,7 +74,7 @@
 
                     // Tally Wins
                     if (isFinished && Array.isArray(game.winners)) {
-                        game.winners.forEach(w => {
+                        game.winners.filter(w => w !== null).forEach(w => {
                             winCount[w] = (winCount[w] || 0) + 1;
                         });
                     }
@@ -94,7 +94,14 @@
                     `;
 
                     if (isFinished) {
-                        const winnerText = game.winners ? game.winners.join(', ') : 'Unknown';
+                        // SAFELY EXTRACT WINNERS: Handles both arrays and plain text strings
+                        let winnerText = 'Unknown';
+                        if (Array.isArray(game.winners)) {
+                            winnerText = game.winners.filter(w => w !== null).join(', ') || 'Unknown';
+                        } else if (game.winners) {
+                            winnerText = game.winners;
+                        }
+
                         archiveHtml += `
                             <details class="card archived">
                                 <summary>
