@@ -1,5 +1,5 @@
 {
-  "last_updated": 1788401280,
+  "last_updated": 1788401929,
   "total_games": 36,
   "games": [
     {
@@ -295,7 +295,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 86160
+      "time_remaining": 85510
     },
     {
       "gameid": "81541323",
@@ -581,7 +581,7 @@
       "scenario_name": "Default with History",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 83774
+      "time_remaining": 83124
     },
     {
       "gameid": "81542603",
@@ -821,7 +821,7 @@
       "scenario_name": "",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 75504
+      "time_remaining": 74854
     },
     {
       "gameid": "81539522",
@@ -1064,7 +1064,7 @@
       "scenario_name": "Default with History",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 71768
+      "time_remaining": 71118
     },
     {
       "gameid": "81527004",
@@ -1279,7 +1279,7 @@
         "Bofa Deez": 1777571286,
         "nico12": 1777409156,
         "MeadeBot": 1777336562,
-        "HoldenGreenberg": 1777319479,
+        "HoldenGreenberg": 1788401360,
         "fitzyfbaby": 1779398809,
         "harambae": 1779848513,
         "doubledragon": 1777402905
@@ -4933,7 +4933,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 86185
+      "time_remaining": 85536
     },
     {
       "gameid": "81542982",
@@ -5139,7 +5139,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 79218
+      "time_remaining": 78569
     },
     {
       "gameid": "696943",
