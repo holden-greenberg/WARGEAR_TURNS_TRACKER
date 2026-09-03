@@ -16,7 +16,6 @@ STATE_FILE = "data/last_turns.json"
 DASHBOARD_FILE = "data/dashboard.json"
 os.makedirs("data", exist_ok=True)
 
-# Load previous turns state for Discord notifications
 if os.path.exists(STATE_FILE):
     try:
         with open(STATE_FILE, "r") as f:
@@ -44,22 +43,25 @@ for player in players:
     current_player_turns = {}
     prev_player_turns = previous_state.get(name, {})
 
-    # Fetch both Live and Finished games to support the archive and leaderboard
+    # Fetch both Live and Finished games using pagination
     for view_type in ["Live", "Finished"]:
-        url = "https://www.wargear.net/rest/GetGameList/my"
-        try:
-            resp = requests.get(
-                url,
-                params={"api_key": api_key, "viewselector": view_type, "format": "json"},
-                headers=headers,
-                timeout=20
-            )
-            
-            if resp.status_code == 200:
-                data = resp.json()
+        page = 1
+        while True:
+            url = "https://www.wargear.net/rest/GetGameList/my"
+            try:
+                resp = requests.get(
+                    url,
+                    params={"api_key": api_key, "viewselector": view_type, "pagenumber": page, "format": "json"},
+                    headers=headers,
+                    timeout=20
+                )
+                
+                if resp.status_code != 200:
+                    break
 
+                data = resp.json()
                 if not data or not isinstance(data, list):
-                    continue
+                    break
 
                 for item in data:
                     game = item.get("games") if isinstance(item, dict) and "games" in item else item
@@ -68,8 +70,7 @@ for player in players:
                         continue
 
                     # Deduplicate into master game collection
-                    if game_id not in all_games:
-                        all_games[game_id] = game
+                    all_games[game_id] = game
 
                     # Only check for active Discord turn alerts if the game is Live
                     if view_type == "Live":
@@ -89,7 +90,6 @@ for player in players:
                             current_player_turns[game_id] = turn_stamp
                             game_name = game.get("name", "WarGear Game")
 
-                            # Alert Discord if it's newly their turn
                             if game_id not in prev_player_turns or prev_player_turns[game_id] != turn_stamp:
                                 print(f"⚔️ New turn for {name} in '{game_name}'! Sending Discord alert...")
                                 mention = f"<@{discord_id}>" if discord_id else f"**{name}**"
@@ -104,20 +104,19 @@ for player in players:
                                     except Exception as post_err:
                                         print(f"Failed to post to Discord: {post_err}")
 
-            else:
-                print(f"Failed to fetch {view_type} games for {name}: Status {resp.status_code}")
+                if len(data) < 5:
+                    break
+                page += 1
 
-        except Exception as e:
-            print(f"Error fetching {view_type} games for {name}: {e}")
+            except Exception as e:
+                print(f"Error fetching {view_type} games page {page} for {name}: {e}")
+                break
             
-    # Save their turn state to prevent duplicate Discord pings
     new_state[name] = current_player_turns
 
-# Save notification state
 with open(STATE_FILE, "w") as f:
     json.dump(new_state, f, indent=2)
 
-# Save aggregated dashboard payload
 dashboard_payload = {
     "last_updated": int(time.time()),
     "total_games": len(all_games),
@@ -126,4 +125,4 @@ dashboard_payload = {
 with open(DASHBOARD_FILE, "w") as f:
     json.dump(dashboard_payload, f, indent=2)
 
-print(f"\nDone! Saved {len(all_games)} games to {DASHBOARD_FILE}.")
+print(f"\nDone! Saved {len(all_games)} total unique games to {DASHBOARD_FILE}.")
