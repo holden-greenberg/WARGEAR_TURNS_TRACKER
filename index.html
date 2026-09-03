@@ -115,8 +115,7 @@
                 document.getElementById('leaderboard-list').innerHTML = Object.entries(winCount).length ? 
                     Object.entries(winCount).sort((a,b) => b[1]-a[1]).map(([name, count]) => `<li><strong>${name}</strong>: ${count} win${count > 1 ? 's' : ''}</li>`).join('') : '<li>No wins yet.</li>';
 
-            } catch (err) { console.error("Could not load data"); }
-        }
+} catch (err) { console.error("Error details:", err); }        }
 
         loadDashboard();
         setInterval(loadDashboard, 60000);
