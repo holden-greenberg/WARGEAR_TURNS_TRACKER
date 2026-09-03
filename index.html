@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WarGear Command Center</title>
+    <style>
+        :root {
+            --bg: #0e1117;
+            --surface: #161b22;
+            --border: #30363d;
+            --accent: #58a6ff;
+            --turn-glow: #d29922;
+            --text: #c9d1d9;
+            --text-white: #f0f6fc;
+            --danger: #f85149;
+            --success: #3fb950;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: var(--bg); color: var(--text); padding: 20px; line-height: 1.5; }
+        header { max-width: 1200px; margin: 0 auto 24px auto; display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
+        h1 { color: var(--text-white); font-size: 1.8rem; display: flex; align-items: center; gap: 8px; }
+        .sync-info { font-size: 0.85rem; color: #8b949e; }
+        .grid { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 20px; }
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; transition: transform 0.15s ease, border-color 0.15s ease; }
+        .card:hover { transform: translateY(-2px); border-color: #8b949e; }
+        .card-header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: flex-start; }
+        .game-title { color: var(--text-white); font-size: 1.15rem; font-weight: 600; text-decoration: none; }
+        .game-title:hover { color: var(--accent); }
+        .status-badge { font-size: 0.72rem; text-transform: uppercase; padding: 2px 8px; border-radius: 12px; font-weight: bold; background: #21262d; border: 1px solid var(--border); color: #8b949e; }
+        .status-live { border-color: var(--success); color: var(--success); }
+        
+        .turn-banner { background: #382704; border-bottom: 1px solid var(--turn-glow); color: #f2cc60; padding: 10px 16px; font-size: 0.92rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+        .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--turn-glow); box-shadow: 0 0 0 0 rgba(210, 153, 34, 0.7); animation: pulsing 1.6s infinite; }
+        @keyframes pulsing { 0% { box-shadow: 0 0 0 0 rgba(210, 153, 34, 0.7); } 70% { box-shadow: 0 0 0 8px rgba(210, 153, 34, 0); } 100% { box-shadow: 0 0 0 0 rgba(210, 153, 34, 0); } }
+
+        .card-body { padding: 16px; flex: 1; display: flex; flex-direction: column; gap: 12px; }
+        .meta-row { display: flex; justify-content: space-between; font-size: 0.85rem; color: #8b949e; }
+        .roster-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8b949e; margin-top: 4px; }
+        .player-list { display: flex; flex-wrap: wrap; gap: 6px; }
+        .player-chip { display: flex; align-items: center; gap: 6px; padding: 3px 8px; background: #21262d; border-radius: 6px; font-size: 0.82rem; border: 1px solid var(--border); }
+        .player-chip.eliminated { opacity: 0.45; text-decoration: line-through; border-color: var(--danger); }
+        .player-chip.is-turn { border-color: var(--turn-glow); font-weight: bold; color: #f2cc60; background: #261f0a; }
+        .color-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+        .card-footer { padding: 12px 16px; border-top: 1px solid var(--border); background: #13171e; display: flex; justify-content: flex-end; }
+        .play-btn { background: #238636; color: white; text-decoration: none; padding: 6px 14px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; }
+        .play-btn:hover { background: #2ea043; }
+        .empty-state { text-align: center; padding: 60px 20px; color: #8b949e; grid-column: 1 / -1; }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <h1>⚔️ WarGear HQ</h1>
+            <p>Live turn tracker & battle dashboard</p>
+        </div>
+        <div class="sync-info" id="sync-info">Loading games...</div>
+    </header>
+
+    <main class="grid" id="grid"></main>
+
+    <script>
+        async function loadDashboard() {
+            const grid = document.getElementById('grid');
+            const syncInfo = document.getElementById('sync-info');
+
+            try {
+                const res = await fetch('data/dashboard.json?_=' + Date.now());
+                if (!res.ok) throw new Error("No data found");
+                const payload = await res.json();
+                
+                const games = payload.games || [];
+                const updated = new Date(payload.last_updated * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                syncInfo.textContent = `Last sync: ${updated} • ${games.length} active games`;
+
+                if (games.length === 0) {
+                    grid.innerHTML = `<div class="empty-state"><h3>No active games detected.</h3><p>All peace on the battlefront!</p></div>`;
+                    return;
+                }
+
+                grid.innerHTML = games.map(game => {
+                    const statusClass = (game.gamestatus || '').toLowerCase() === 'live' ? 'status-live' : '';
+                    
+                    // Extract players on the clock
+                    let turnPlayers = [];
+                    if (Array.isArray(game.current_turn)) {
+                        turnPlayers = game.current_turn.map(p => (typeof p === 'object' ? p.name : p)).filter(Boolean);
+                    }
+                    const turnText = turnPlayers.length > 0 ? turnPlayers.join(', ') : 'None';
+
+                    // Parse player seats
+                    const players = [];
+                    if (game.players && typeof game.players === 'object') {
+                        Object.values(game.players).forEach(p => {
+                            if (p && p.name) players.push(p);
+                        });
+                    }
+
+                    const rosterHtml = players.map(p => {
+                        const isTurn = turnPlayers.some(tp => tp.toLowerCase() === p.name.toLowerCase());
+                        const isDead = p.status === 'Eliminated' || p.status === 'Booted';
+                        const dotColor = p.color_name || '#888';
+                        return `
+                            <span class="player-chip ${isTurn ? 'is-turn' : ''} ${isDead ? 'eliminated' : ''}" title="${p.status}">
+                                <span class="color-dot" style="background: ${dotColor};"></span>
+                                ${p.name}
+                            </span>
+                        `;
+                    }).join('');
+
+                    return `
+                        <div class="card">
+                            <div class="card-header">
+                                <div>
+                                    <a class="game-title" href="https://www.wargear.net/games/player/${game.gameid}" target="_blank">
+                                        ${game.name}
+                                    </a>
+                                </div>
+                                <span class="status-badge ${statusClass}">${game.gamestatus || 'Active'}</span>
+                            </div>
+                            
+                            <div class="turn-banner">
+                                <span class="pulse"></span>
+                                <span>Turn: <strong>${turnText}</strong></span>
+                            </div>
+
+                            <div class="card-body">
+                                <div class="meta-row">
+                                    <span>🗺️ ${game.boardname || 'Custom Board'}</span>
+                                    <span>👥 ${players.length} Players</span>
+                                </div>
+
+                                <div class="roster-title">Combatants</div>
+                                <div class="player-list">
+                                    ${rosterHtml || '<span style="color:#8b949e; font-size:0.8rem;">No roster data</span>'}
+                                </div>
+                            </div>
+
+                            <div class="card-footer">
+                                <a class="play-btn" href="https://www.wargear.net/games/player/${game.gameid}" target="_blank">
+                                    Open Board →
+                                </a>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (err) {
+                grid.innerHTML = `<div class="empty-state"><h3>Unable to load game data</h3><p>Run your GitHub Action to generate data/dashboard.json</p></div>`;
+                syncInfo.textContent = "Offline";
+            }
+        }
+
+        loadDashboard();
+    </script>
+</body>
+</html>
