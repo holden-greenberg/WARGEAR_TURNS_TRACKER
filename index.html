@@ -5,25 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WarGear Tracker</title>
     <style>
-        body { font-family: -apple-system, sans-serif; background: #121212; color: #e0e0e0; padding: 20px; line-height: 1.5; }
-        .header-panel { background: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 15px; margin-bottom: 20px; display: flex; gap: 40px; }
-        .header-col { flex: 1; }
+        body { font-family: -apple-system, sans-serif; background: #121212; color: #e0e0e0; padding: 15px; line-height: 1.5; margin: 0; }
+        
+        /* Mobile-Responsive Header Panel */
+        .header-panel { background: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 15px; margin-bottom: 20px; display: flex; flex-wrap: wrap; gap: 20px; }
+        .header-col { flex: 1 1 280px; min-width: 0; }
+        h1 { font-size: 1.5rem; margin-top: 5px; }
         h2 { margin-top: 0; color: #fff; font-size: 1.2rem; border-bottom: 1px solid #333; padding-bottom: 5px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        
+        /* Mobile-Responsive Grid */
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; margin-bottom: 30px; }
         .card { background: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 15px; }
         
         .archived { background: #1a1a1a; border-color: #2a2a2a; filter: grayscale(80%); opacity: 0.8; }
-        .archived summary { font-weight: bold; cursor: pointer; padding: 10px; background: #222; border-radius: 4px; list-style: none; display: flex; justify-content: space-between; }
+        .archived summary { font-weight: bold; cursor: pointer; padding: 10px; background: #222; border-radius: 4px; list-style: none; display: flex; justify-content: space-between; align-items: center; }
         .archived summary::-webkit-details-marker { display: none; }
         .archived-content { padding-top: 15px; }
-        .winner-text { color: #4CAF50; font-weight: bold; }
+        .winner-text { color: #4CAF50; font-weight: bold; font-size: 0.9rem; }
 
-        .player-row { padding: 4px 8px; border-bottom: 1px solid #2a2a2a; display: flex; justify-content: space-between; }
+        .player-row { padding: 6px 8px; border-bottom: 1px solid #2a2a2a; display: flex; justify-content: space-between; font-size: 0.95rem; }
         .player-row.is-turn { background: #3a2a00; border-left: 3px solid #ffaa00; color: #ffcc55; font-weight: bold; }
         .player-row.eliminated { text-decoration: line-through; opacity: 0.5; color: #ff5555; }
         
-        .play-btn { display: block; text-align: center; background: #238636; color: white; text-decoration: none; padding: 8px; border-radius: 4px; margin-top: 15px; font-weight: bold; }
-        .tag { background: #ffaa00; color: #000; padding: 2px 6px; border-radius: 12px; font-size: 0.8rem; font-weight: bold; }
+        .play-btn { display: block; text-align: center; background: #238636; color: white; text-decoration: none; padding: 10px; border-radius: 4px; margin-top: 15px; font-weight: bold; }
+        .tag { background: #ffaa00; color: #000; padding: 2px 6px; border-radius: 12px; font-size: 0.8rem; font-weight: bold; float: right; }
+        
+        ul { padding-left: 0; list-style-type: none; margin: 0; }
+        li { padding: 4px 0; border-bottom: 1px dashed #333; }
+        li:last-child { border-bottom: none; }
     </style>
 </head>
 <body>
@@ -32,11 +41,11 @@
     <div class="header-panel">
         <div class="header-col">
             <h2>🚨 On The Clock</h2>
-            <ul id="active-turns-list" style="margin:0; padding-left:20px; color:#ffcc55;">Loading...</ul>
+            <ul id="active-turns-list" style="color:#ffcc55;">Loading...</ul>
         </div>
         <div class="header-col">
             <h2>🏆 Leaderboard (Tracker Era)</h2>
-            <ul id="leaderboard-list" style="margin:0; padding-left:20px; color:#4CAF50;">Loading...</ul>
+            <ul id="leaderboard-list" style="color:#4CAF50;">Loading...</ul>
         </div>
     </div>
 
@@ -47,32 +56,46 @@
     <div style="display:flex; flex-direction:column; gap:10px;" id="archive-grid"></div>
 
     <script>
+        // Set the official start date of the Tracker Era (September 2, 2026)
+        // This converts the date into a Unix timestamp to match the WarGear API format
+        const TRACKER_ERA_START = new Date("2026-09-02T00:00:00").getTime() / 1000;
+
         async function loadDashboard() {
             try {
                 const res = await fetch('data/dashboard.json?_=' + Date.now());
-                const games = (await res.json()).games || [];
+                const allGames = (await res.json()).games || [];
                 
                 let activeTurnsCount = {};
                 let winCount = {};
                 let liveHtml = '';
                 let archiveHtml = '';
 
-                games.forEach(game => {
+                // Filter out any game that finished before the Tracker Era started
+                const validGames = allGames.filter(game => {
+                    const isFinished = game.gamestatus === 'Finished';
+                    if (isFinished && (game.endstamp < TRACKER_ERA_START || !game.endstamp)) {
+                        return false; 
+                    }
+                    return true;
+                });
+
+                validGames.forEach(game => {
+                    // Check if the game status is marked as Finished by the API
                     const isFinished = game.gamestatus === 'Finished';
                     
-                    // SAFELY EXTRACT TURNS: Filters out the 'null' entries from the WarGear API
+                    // SAFELY EXTRACT TURNS: Filters out 'null' entries
                     let activeTurnNames = Array.isArray(game.current_turn) 
                         ? game.current_turn.filter(p => p !== null).map(p => typeof p === 'object' ? p.name : p) 
                         : [];
                     
-                    // Tally Active Turns
+                    // Tally Active Turns (Only for live games)
                     if (!isFinished) {
                         activeTurnNames.forEach(name => {
                             activeTurnsCount[name] = (activeTurnsCount[name] || 0) + 1;
                         });
                     }
 
-                    // Tally Wins
+                    // Tally Wins (Only for Tracker Era finished games)
                     if (isFinished && Array.isArray(game.winners)) {
                         game.winners.filter(w => w !== null).forEach(w => {
                             winCount[w] = (winCount[w] || 0) + 1;
@@ -87,14 +110,14 @@
                     }).join('');
 
                     const cardInner = `
-                        <div class="meta-info" style="color:#aaa; font-size:0.85rem; margin-bottom:10px;">Status: ${game.gamestatus} | Map: ${game.boardname}</div>
+                        <div style="color:#aaa; font-size:0.85rem; margin-bottom:10px;">Status: ${game.gamestatus} | Map: ${game.boardname}</div>
                         <strong>Roster:</strong>
-                        <div style="margin-top:5px;">${rosterHtml}</div>
+                        <div style="margin-top:5px; border-top: 1px solid #2a2a2a;">${rosterHtml}</div>
                         <a href="https://www.wargear.net/games/player/${game.gameid}" class="play-btn" target="_blank">View Game</a>
                     `;
 
                     if (isFinished) {
-                        // SAFELY EXTRACT WINNERS: Handles both arrays and plain text strings
+                        // SAFELY EXTRACT WINNERS
                         let winnerText = 'Unknown';
                         if (Array.isArray(game.winners)) {
                             winnerText = game.winners.filter(w => w !== null).join(', ') || 'Unknown';
@@ -116,15 +139,15 @@
                     }
                 });
 
-                document.getElementById('live-grid').innerHTML = liveHtml || '<p>No live games.</p>';
-                document.getElementById('archive-grid').innerHTML = archiveHtml || '<p>No archived games yet.</p>';
+                document.getElementById('live-grid').innerHTML = liveHtml || '<p style="color:#aaa;">No live games currently active.</p>';
+                document.getElementById('archive-grid').innerHTML = archiveHtml || '<p style="color:#aaa;">No Tracker Era games have finished yet. Play on!</p>';
                 
                 // Render Top Panels
                 document.getElementById('active-turns-list').innerHTML = Object.entries(activeTurnsCount).length ? 
-                    Object.entries(activeTurnsCount).sort((a,b) => b[1]-a[1]).map(([name, count]) => `<li><strong>${name}</strong> <span class="tag">${count} turns</span></li>`).join('') : '<li>All quiet.</li>';
+                    Object.entries(activeTurnsCount).sort((a,b) => b[1]-a[1]).map(([name, count]) => `<li><strong>${name}</strong> <span class="tag">${count}</span></li>`).join('') : '<li style="color:#aaa;">All quiet. No active turns.</li>';
                 
                 document.getElementById('leaderboard-list').innerHTML = Object.entries(winCount).length ? 
-                    Object.entries(winCount).sort((a,b) => b[1]-a[1]).map(([name, count]) => `<li><strong>${name}</strong>: ${count} win${count > 1 ? 's' : ''}</li>`).join('') : '<li>No wins yet.</li>';
+                    Object.entries(winCount).sort((a,b) => b[1]-a[1]).map(([name, count]) => `<li><strong>${name}</strong> <span style="float:right;">${count} win${count > 1 ? 's' : ''}</span></li>`).join('') : '<li style="color:#aaa;">No wins recorded in the Tracker Era yet.</li>';
 
             } catch (err) { 
                 console.error("Error details:", err); 
