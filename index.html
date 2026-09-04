@@ -63,6 +63,7 @@
             <thead>
                 <tr>
                     <th data-key="name" data-type="string">Player</th>
+                    <th data-key="elo" data-type="number">Elo</th>
                     <th data-key="wins" data-type="number">Wins</th>
                     <th data-key="winRate" data-type="number">Win %</th>
                     <th data-key="gamesPlayed" data-type="number">Games</th>
@@ -71,7 +72,7 @@
                     <th data-key="avgTurnSeconds" data-type="number">Avg Turn Time</th>
                 </tr>
             </thead>
-            <tbody id="stats-tbody"><tr><td colspan="7">Loading...</td></tr></tbody>
+            <tbody id="stats-tbody"><tr><td colspan="8">Loading...</td></tr></tbody>
         </table>
     </div>
 
@@ -109,7 +110,68 @@
         }
 
         let statsRows = [];
-        let sortState = { key: 'winRate', dir: -1 };
+        let sortState = { key: 'elo', dir: -1 };
+
+        // Multiplayer Elo: every finished game is decomposed into pairwise
+        // matchups between its players, ranked winner-first then by how many
+        // turns each eliminated player survived. Ratings update per pair
+        // using the standard Elo expectation, un-normalized by player count -
+        // so an 8-player FFA (7 pairwise results) moves a rating far more
+        // than a 3-player game (2 pairwise results), and beating a
+        // higher-rated opponent earns more than beating a lower-rated one.
+        const ELO_BASE = 1500;
+        const ELO_K = 20;
+
+        function computePlayerElo(finishedGames) {
+            const ratings = {};
+            const gamesForElo = [...finishedGames].sort((a, b) => (a.endstamp || 0) - (b.endstamp || 0));
+
+            gamesForElo.forEach(game => {
+                const players = game.players ? Object.values(game.players).filter(p => p && p.name) : [];
+                if (players.length < 2) return;
+
+                const winners = new Set(Array.isArray(game.winners) ? game.winners.filter(w => w !== null) : []);
+                const ranked = players.map(p => ({
+                    name: p.name,
+                    tier: winners.has(p.name) ? 1 : 0,
+                    survival: typeof p.turn_counter === 'number' ? p.turn_counter : -1
+                }));
+
+                ranked.forEach(p => { if (!(p.name in ratings)) ratings[p.name] = ELO_BASE; });
+                const deltas = {};
+                ranked.forEach(p => { deltas[p.name] = 0; });
+
+                for (let i = 0; i < ranked.length; i++) {
+                    for (let j = i + 1; j < ranked.length; j++) {
+                        const a = ranked[i], b = ranked[j];
+                        let scoreA;
+                        if (a.tier !== b.tier) scoreA = a.tier > b.tier ? 1 : 0;
+                        else if (a.survival !== b.survival) scoreA = a.survival > b.survival ? 1 : 0;
+                        else scoreA = 0.5;
+                        const scoreB = 1 - scoreA;
+
+                        const ratingA = ratings[a.name], ratingB = ratings[b.name];
+                        const expectedA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
+                        const expectedB = 1 - expectedA;
+
+                        deltas[a.name] += ELO_K * (scoreA - expectedA);
+                        deltas[b.name] += ELO_K * (scoreB - expectedB);
+                    }
+                }
+
+                Object.keys(deltas).forEach(name => { ratings[name] += deltas[name]; });
+            });
+
+            return ratings;
+        }
+
+        // Green (best) to red (worst), scaled across the players currently in the table.
+        function eloColor(elo, min, max) {
+            if (elo === null || elo === undefined || min === max) return '';
+            const t = Math.max(0, Math.min(1, (elo - min) / (max - min)));
+            const hue = t * 120;
+            return `background: hsla(${hue}, 65%, 32%, 0.6); color: #fff;`;
+        }
 
         function renderStatsTable() {
             const tbody = document.getElementById('stats-tbody');
@@ -120,9 +182,14 @@
                 return dir * ((av ?? -Infinity) - (bv ?? -Infinity));
             });
 
+            const playedElos = statsRows.filter(r => r.gamesPlayed).map(r => r.elo);
+            const minElo = playedElos.length ? Math.min(...playedElos) : 0;
+            const maxElo = playedElos.length ? Math.max(...playedElos) : 0;
+
             tbody.innerHTML = sorted.length ? sorted.map(r => `
                 <tr>
                     <td class="name-cell">${r.name}</td>
+                    <td style="${r.gamesPlayed ? eloColor(r.elo, minElo, maxElo) : ''}">${r.gamesPlayed ? Math.round(r.elo) : '—'}</td>
                     <td>${r.wins}</td>
                     <td>${r.gamesPlayed ? Math.round(r.winRate * 100) + '%' : '—'}</td>
                     <td>${r.gamesPlayed}</td>
@@ -130,7 +197,7 @@
                     <td>${r.gamesPlayed ? r.eliminationsPerGame.toFixed(2) : '—'}</td>
                     <td>${r.avgTurnSeconds !== null ? formatDuration(r.avgTurnSeconds) : '—'}</td>
                 </tr>
-            `).join('') : '<tr><td colspan="7" style="color:#aaa;">No player stats recorded yet.</td></tr>';
+            `).join('') : '<tr><td colspan="8" style="color:#aaa;">No player stats recorded yet.</td></tr>';
 
             document.querySelectorAll('#stats-table th').forEach(th => {
                 th.classList.toggle('sorted', th.dataset.key === key);
@@ -284,12 +351,15 @@
                     }).join('') : '<li style="color:#aaa;">All quiet. No active turns.</li>';
                 
                 // Build the combined per-player stats table
+                const eloRatings = computePlayerElo(validGames.filter(g => g.gamestatus === 'Finished'));
+
                 let allNames = new Set([
                     ...Object.keys(winCount),
                     ...Object.keys(gamesPlayedCount),
                     ...Object.keys(survivalTurns),
                     ...Object.keys(eliminationCount),
-                    ...Object.keys(turnStats)
+                    ...Object.keys(turnStats),
+                    ...Object.keys(eloRatings)
                 ]);
 
                 statsRows = Array.from(allNames).map(name => {
@@ -303,6 +373,7 @@
 
                     return {
                         name,
+                        elo: eloRatings[name] ?? ELO_BASE,
                         wins,
                         gamesPlayed,
                         winRate: gamesPlayed ? wins / gamesPlayed : 0,
