@@ -1,5 +1,5 @@
 {
-  "last_updated": 1788469519,
+  "last_updated": 1788495244,
   "total_games": 5,
   "games": [
     {
@@ -81,9 +81,9 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 0,
-          "count_fortifies": 0,
-          "turn_counter": 13,
+          "count_attacks": 2,
+          "count_fortifies": 1,
+          "turn_counter": 14,
           "autoboot_next_turn": 0,
           "name": "Bofa Deez",
           "condition_value": "?"
@@ -107,7 +107,7 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 5,
+          "count_attacks": 0,
           "count_fortifies": 0,
           "turn_counter": 13,
           "autoboot_next_turn": 0,
@@ -247,11 +247,11 @@
       },
       "eliminated": "a:1:{i:0;s:32:\"59be240211f1834f6d990356f257c7aa\";}",
       "current_turn": [
-        "Bofa Deez"
+        "Invader Zim"
       ],
       "flags": "0",
       "gamestatus": "Live",
-      "turnstamp": "1788460245",
+      "turnstamp": "1788478925",
       "createstamp": "1786640274",
       "startstamp": "1786752714",
       "endstamp": "0",
@@ -286,7 +286,7 @@
       "scenario_name": "Default with History",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 77147
+      "time_remaining": 70114
     },
     {
       "gameid": "81542603",
@@ -526,7 +526,7 @@
       "scenario_name": "",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 71355
+      "time_remaining": 45642
     },
     {
       "gameid": "81542418",
@@ -821,7 +821,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 63522
+      "time_remaining": 37809
     },
     {
       "gameid": "81542981",
@@ -903,7 +903,7 @@
           "condition_hidden": "?",
           "count_attacks": 0,
           "count_fortifies": 1,
-          "turn_counter": 15,
+          "turn_counter": 16,
           "autoboot_next_turn": 0,
           "name": "Bofa Deez",
           "condition_value": "?"
@@ -954,8 +954,8 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 4,
-          "count_fortifies": 1,
+          "count_attacks": 0,
+          "count_fortifies": 0,
           "turn_counter": 15,
           "autoboot_next_turn": 0,
           "name": "Invader Zim",
@@ -964,11 +964,11 @@
       },
       "eliminated": "a:1:{i:0;s:32:\"501f9e9814f88d5c32add839250f67cd\";}",
       "current_turn": [
-        "Bofa Deez"
+        "Invader Zim"
       ],
       "flags": "0",
       "gamestatus": "Live",
-      "turnstamp": "1788455591",
+      "turnstamp": "1788478863",
       "createstamp": "1787757043",
       "startstamp": "1787757212",
       "endstamp": "0",
@@ -1005,7 +1005,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 72493
+      "time_remaining": 70052
     },
     {
       "gameid": "81542982",
@@ -1211,7 +1211,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 70462
+      "time_remaining": 44749
     }
   ]
 }
