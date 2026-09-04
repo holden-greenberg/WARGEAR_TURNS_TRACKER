@@ -104,7 +104,11 @@
         ul { padding-left: 0; list-style-type: none; margin: 0; }
         li { padding: 0; }
 
-        .stats-wrap { overflow-x: auto; border-radius: 12px; }
+        .stats-wrap { overflow-x: auto; border-radius: 12px; scrollbar-color: #3a4152 var(--panel); scrollbar-width: thin; }
+        .stats-wrap::-webkit-scrollbar { height: 8px; }
+        .stats-wrap::-webkit-scrollbar-track { background: var(--panel); }
+        .stats-wrap::-webkit-scrollbar-thumb { background: #3a4152; border-radius: 20px; }
+        .stats-wrap::-webkit-scrollbar-thumb:hover { background: #4a5468; }
         table.stats-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; white-space: nowrap; }
         table.stats-table th, table.stats-table td { padding: 10px 12px; text-align: right; border-bottom: 1px solid var(--border); }
         table.stats-table th:first-child, table.stats-table td:first-child { text-align: left; }
