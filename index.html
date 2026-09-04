@@ -185,8 +185,21 @@
 
         // --- Player avatar colors, derived from each player's most-used WarGear color_code ---
         let playerColorHex = {};
-        // --- Player profile picture URLs, derived from each player's WarGear account id ---
-        let playerAvatarUrl = {};
+        // --- Player profile picture ids, derived from each player's WarGear account id ---
+        // WarGear serves these under whatever extension the player originally uploaded
+        // (.png, .jpg, .gif, ...), so each candidate is tried in turn client-side.
+        let playerAvatarId = {};
+        const AVATAR_EXTS = ['png', 'jpg', 'jpeg', 'gif'];
+
+        function handleAvatarError(img) {
+            const nextIdx = parseInt(img.dataset.extIdx, 10) + 1;
+            if (nextIdx < AVATAR_EXTS.length) {
+                img.dataset.extIdx = nextIdx;
+                img.src = `https://www.wargear.net/images/players/${img.dataset.avatarId}.${AVATAR_EXTS[nextIdx]}`;
+            } else {
+                img.remove();
+            }
+        }
 
         function mostCommon(countsByName) {
             const result = {};
@@ -221,11 +234,7 @@
                 });
             });
 
-            const bestIds = mostCommon(idCounts);
-            playerAvatarUrl = {};
-            Object.entries(bestIds).forEach(([name, id]) => {
-                if (id) playerAvatarUrl[name] = `https://www.wargear.net/images/players/${id}.png`;
-            });
+            playerAvatarId = mostCommon(idCounts);
 
             return mostCommon(colorCounts);
         }
@@ -307,12 +316,14 @@
             const fg = textColorFor(bg);
             const cls = size === 'lg' ? 'avatar lg' : 'avatar';
             const fallback = `<span class="${cls}" style="background:${bg}; color:${fg};" title="${name}">${initialsFor(name)}</span>`;
-            const url = playerAvatarUrl[name];
-            if (!url) return fallback;
+            const id = playerAvatarId[name];
+            if (!id) return fallback;
             // WarGear returns a 404 (no <img> renders) for players with no uploaded
-            // profile picture, so on error we swap in the colored-initials chip.
+            // profile picture, or when the wrong extension is tried; handleAvatarError
+            // walks the remaining candidate extensions before giving up to the chip.
             const wrapCls = size === 'lg' ? 'avatar-wrap lg' : 'avatar-wrap';
-            return `<span class="${wrapCls}">${fallback}<img src="${url}" alt="" loading="lazy" title="${name}" onerror="this.remove()"></span>`;
+            const firstUrl = `https://www.wargear.net/images/players/${id}.${AVATAR_EXTS[0]}`;
+            return `<span class="${wrapCls}">${fallback}<img src="${firstUrl}" data-avatar-id="${id}" data-ext-idx="0" alt="" loading="lazy" title="${name}" onerror="handleAvatarError(this)"></span>`;
         }
 
         // Visual countdown bar for "On The Clock" — green when fresh, red as the turn expires.
