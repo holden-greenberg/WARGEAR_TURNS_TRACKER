@@ -13,7 +13,81 @@ except Exception:
     players = []
 
 DASHBOARD_FILE = "data/dashboard.json"
+TURN_STATS_FILE = "data/turn_stats.json"
 os.makedirs("data", exist_ok=True)
+
+# Load the previous snapshot (if any) so we can detect turn handoffs between
+# runs and accumulate real elapsed-time-per-turn stats over time - a single
+# snapshot has no history, but diffing consecutive snapshots does.
+try:
+    with open(DASHBOARD_FILE) as f:
+        previous_games_by_id = {g["gameid"]: g for g in json.load(f).get("games", [])}
+except Exception:
+    previous_games_by_id = {}
+
+try:
+    with open(TURN_STATS_FILE) as f:
+        _turn_stats_saved = json.load(f)
+except Exception:
+    _turn_stats_saved = {}
+
+# turn_stats only reflects Tracker Era *finished* games, matching every other
+# player stat - so turn times are held in `pending` per game-in-progress and
+# only folded into `players` once that game's gamestatus flips to Finished.
+turn_stats = _turn_stats_saved.get("players", {})
+pending_turn_stats = _turn_stats_saved.get("pending", {})
+finalized_games = set(_turn_stats_saved.get("finalized_games", []))
+
+
+def normalize_turn_names(raw):
+    """current_turn is a list that may contain None placeholders or player
+    objects instead of plain name strings, depending on game state."""
+    if not isinstance(raw, list):
+        return set()
+    names = set()
+    for p in raw:
+        if p is None:
+            continue
+        names.add(p.get("name") if isinstance(p, dict) else p)
+    return names
+
+
+def record_turn_handoff(game_id, old_game, new_game):
+    """When the set of players on-turn changes between two snapshots, credit
+    the elapsed time (new turnstamp - old turnstamp) to whoever just
+    finished their turn, staged under this game until it finishes. turnstamp
+    only moves on a real turn change (not on every poll), so this stays
+    accurate regardless of how often we poll."""
+    old_names = normalize_turn_names(old_game.get("current_turn"))
+    new_names = normalize_turn_names(new_game.get("current_turn"))
+    if not old_names or old_names == new_names:
+        return
+
+    old_ts = old_game.get("turnstamp")
+    new_ts = new_game.get("turnstamp")
+    if not isinstance(old_ts, (int, float)) or not isinstance(new_ts, (int, float)):
+        return
+    elapsed = new_ts - old_ts
+    if elapsed <= 0:
+        return
+
+    game_pending = pending_turn_stats.setdefault(game_id, {})
+    for name in old_names - new_names:
+        stats = game_pending.setdefault(name, {"turns": 0, "total_seconds": 0})
+        stats["turns"] += 1
+        stats["total_seconds"] += elapsed
+
+
+def finalize_turn_stats_if_finished(game_id, game):
+    """Fold a game's staged turn times into the permanent per-player totals
+    the first time we see it as Finished."""
+    if game.get("gamestatus") != "Finished" or game_id in finalized_games:
+        return
+    for name, stats in pending_turn_stats.pop(game_id, {}).items():
+        totals = turn_stats.setdefault(name, {"turns": 0, "total_seconds": 0})
+        totals["turns"] += stats["turns"]
+        totals["total_seconds"] += stats["total_seconds"]
+    finalized_games.add(game_id)
 
 # Only games with at least this many of the core group members are counted -
 # keeps out games friends started with people outside the group. Names are
@@ -212,7 +286,21 @@ for player in players:
         if count_core_players(game) < MIN_CORE_PLAYERS:
             continue
 
+        old_game = previous_games_by_id.get(game_id)
+        if old_game:
+            record_turn_handoff(game_id, old_game, game)
+        finalize_turn_stats_if_finished(game_id, game)
+
         all_games[game_id] = game
+
+# Save turn-speed stats
+with open(TURN_STATS_FILE, "w") as f:
+    json.dump({
+        "last_updated": int(time.time()),
+        "players": turn_stats,
+        "pending": pending_turn_stats,
+        "finalized_games": sorted(finalized_games)
+    }, f, indent=2)
 
 # Save dashboard data
 dashboard_payload = {

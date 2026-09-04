@@ -31,10 +31,20 @@
         .tag { background: #ffaa00; color: #000; padding: 2px 6px; border-radius: 12px; font-size: 0.8rem; font-weight: bold; float: right; }
         .clock-games { color: #aaa; font-size: 0.8rem; margin: 2px 0 0 0; font-weight: normal; }
         .clock-games .overdue { color: #ff6b6b; }
-        
+
         ul { padding-left: 0; list-style-type: none; margin: 0; }
         li { padding: 4px 0; border-bottom: 1px dashed #333; }
         li:last-child { border-bottom: none; }
+
+        .stats-wrap { overflow-x: auto; }
+        table.stats-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; white-space: nowrap; }
+        table.stats-table th, table.stats-table td { padding: 8px 10px; text-align: right; border-bottom: 1px solid #2a2a2a; }
+        table.stats-table th:first-child, table.stats-table td:first-child { text-align: left; }
+        table.stats-table th { color: #aaa; font-weight: normal; cursor: pointer; user-select: none; position: sticky; top: 0; background: #1e1e1e; }
+        table.stats-table th:hover { color: #fff; }
+        table.stats-table th.sorted { color: #ffcc55; }
+        table.stats-table tbody tr:hover { background: #232323; }
+        table.stats-table td.name-cell { font-weight: bold; color: #fff; }
     </style>
 </head>
 <body>
@@ -45,10 +55,24 @@
             <h2>🚨 On The Clock</h2>
             <ul id="active-turns-list" style="color:#ffcc55;">Loading...</ul>
         </div>
-        <div class="header-col">
-            <h2>🏆 Leaderboard (Tracker Era)</h2>
-            <ul id="leaderboard-list" style="color:#4CAF50;">Loading...</ul>
-        </div>
+    </div>
+
+    <h2 style="border:none;">📊 Player Stats (Tracker Era)</h2>
+    <div class="card stats-wrap" style="margin-bottom:30px;">
+        <table class="stats-table" id="stats-table">
+            <thead>
+                <tr>
+                    <th data-key="name" data-type="string">Player</th>
+                    <th data-key="wins" data-type="number">Wins</th>
+                    <th data-key="winRate" data-type="number">Win %</th>
+                    <th data-key="gamesPlayed" data-type="number">Games</th>
+                    <th data-key="avgSurvival" data-type="number">Avg Survival</th>
+                    <th data-key="eliminationsPerGame" data-type="number">Elims / Game</th>
+                    <th data-key="avgTurnSeconds" data-type="number">Avg Turn Time</th>
+                </tr>
+            </thead>
+            <tbody id="stats-tbody"><tr><td colspan="7">Loading...</td></tr></tbody>
+        </table>
     </div>
 
     <h2 style="border:none;">Live Games</h2>
@@ -73,13 +97,72 @@
             return `${m}m left`;
         }
 
+        // Formats an average turn duration in seconds as "2h 15m", "45m", etc.
+        function formatDuration(seconds) {
+            if (!seconds || seconds <= 0) return '—';
+            const d = Math.floor(seconds / 86400);
+            const h = Math.floor((seconds % 86400) / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            if (d > 0) return `${d}d ${h}h`;
+            if (h > 0) return `${h}h ${m}m`;
+            return `${m}m`;
+        }
+
+        let statsRows = [];
+        let sortState = { key: 'winRate', dir: -1 };
+
+        function renderStatsTable() {
+            const tbody = document.getElementById('stats-tbody');
+            const { key, dir } = sortState;
+            const sorted = [...statsRows].sort((a, b) => {
+                const av = a[key], bv = b[key];
+                if (typeof av === 'string') return dir * av.localeCompare(bv);
+                return dir * ((av ?? -Infinity) - (bv ?? -Infinity));
+            });
+
+            tbody.innerHTML = sorted.length ? sorted.map(r => `
+                <tr>
+                    <td class="name-cell">${r.name}</td>
+                    <td>${r.wins}</td>
+                    <td>${r.gamesPlayed ? Math.round(r.winRate * 100) + '%' : '—'}</td>
+                    <td>${r.gamesPlayed}</td>
+                    <td>${r.avgSurvival !== null ? r.avgSurvival.toFixed(1) + ' turns' : '—'}</td>
+                    <td>${r.gamesPlayed ? r.eliminationsPerGame.toFixed(2) : '—'}</td>
+                    <td>${r.avgTurnSeconds !== null ? formatDuration(r.avgTurnSeconds) : '—'}</td>
+                </tr>
+            `).join('') : '<tr><td colspan="7" style="color:#aaa;">No player stats recorded yet.</td></tr>';
+
+            document.querySelectorAll('#stats-table th').forEach(th => {
+                th.classList.toggle('sorted', th.dataset.key === key);
+            });
+        }
+
+        document.querySelectorAll('#stats-table th').forEach(th => {
+            th.addEventListener('click', () => {
+                const key = th.dataset.key;
+                if (sortState.key === key) {
+                    sortState.dir *= -1;
+                } else {
+                    sortState = { key, dir: th.dataset.type === 'string' ? 1 : -1 };
+                }
+                renderStatsTable();
+            });
+        });
+
         async function loadDashboard() {
             try {
-                const res = await fetch('data/dashboard.json?_=' + Date.now());
-                const allGames = (await res.json()).games || [];
-                
+                const [dashRes, turnStatsRes] = await Promise.all([
+                    fetch('data/dashboard.json?_=' + Date.now()),
+                    fetch('data/turn_stats.json?_=' + Date.now())
+                ]);
+                const allGames = (await dashRes.json()).games || [];
+                const turnStats = turnStatsRes.ok ? (await turnStatsRes.json()).players || {} : {};
+
                 let activeTurnsGames = {};
                 let winCount = {};
+                let gamesPlayedCount = {};
+                let survivalTurns = {};
+                let eliminationCount = {};
                 const nowSeconds = Date.now() / 1000;
                 let liveHtml = '';
                 let archiveHtml = '';
@@ -128,6 +211,27 @@
 
                     // Build Roster
                     let players = game.players ? Object.values(game.players).filter(p => p && p.name).sort((a, b) => a.seat - b.seat) : [];
+                    let seatToName = {};
+                    players.forEach(p => { seatToName[p.seat] = p.name; });
+
+                    // All player stats (games played, survival, eliminations) are
+                    // Tracker Era finished games only - live games can still flip.
+                    if (isFinished) {
+                        players.forEach(p => {
+                            gamesPlayedCount[p.name] = (gamesPlayedCount[p.name] || 0) + 1;
+
+                            let isEliminated = ['Eliminated', 'Booted', 'Surrendered'].includes(p.status) || !!p.eliminated_by;
+                            if (isEliminated && typeof p.turn_counter === 'number') {
+                                if (!survivalTurns[p.name]) survivalTurns[p.name] = [];
+                                survivalTurns[p.name].push(p.turn_counter);
+                            }
+                            if (p.eliminated_by && seatToName[p.eliminated_by] && seatToName[p.eliminated_by] !== p.name) {
+                                const killer = seatToName[p.eliminated_by];
+                                eliminationCount[killer] = (eliminationCount[killer] || 0) + 1;
+                            }
+                        });
+                    }
+
                     let rosterHtml = players.map(p => {
                         let isEliminated = ['Eliminated', 'Booted', 'Surrendered'].includes(p.status) || !!p.eliminated_by;
                         let displayStatus = isEliminated ? 'Eliminated' : 'Alive';
@@ -179,10 +283,39 @@
                         return `<li><strong>${name}</strong> <span class="tag">${games.length}</span><div class="clock-games">${gamesHtml}</div></li>`;
                     }).join('') : '<li style="color:#aaa;">All quiet. No active turns.</li>';
                 
-                document.getElementById('leaderboard-list').innerHTML = Object.entries(winCount).length ? 
-                    Object.entries(winCount).sort((a,b) => b[1]-a[1]).map(([name, count]) => `<li><strong>${name}</strong> <span style="float:right;">${count} win${count > 1 ? 's' : ''}</span></li>`).join('') : '<li style="color:#aaa;">No wins recorded in the Tracker Era yet.</li>';
+                // Build the combined per-player stats table
+                let allNames = new Set([
+                    ...Object.keys(winCount),
+                    ...Object.keys(gamesPlayedCount),
+                    ...Object.keys(survivalTurns),
+                    ...Object.keys(eliminationCount),
+                    ...Object.keys(turnStats)
+                ]);
 
-            } catch (err) { 
+                statsRows = Array.from(allNames).map(name => {
+                    const wins = winCount[name] || 0;
+                    const gamesPlayed = gamesPlayedCount[name] || 0;
+                    const eliminations = eliminationCount[name] || 0;
+                    const survivals = survivalTurns[name] || [];
+                    const avgSurvival = survivals.length ? survivals.reduce((a, b) => a + b, 0) / survivals.length : null;
+                    const ts = turnStats[name];
+                    const avgTurnSeconds = ts && ts.turns ? ts.total_seconds / ts.turns : null;
+
+                    return {
+                        name,
+                        wins,
+                        gamesPlayed,
+                        winRate: gamesPlayed ? wins / gamesPlayed : 0,
+                        avgSurvival,
+                        eliminations,
+                        eliminationsPerGame: gamesPlayed ? eliminations / gamesPlayed : 0,
+                        avgTurnSeconds
+                    };
+                });
+
+                renderStatsTable();
+
+            } catch (err) {
                 console.error("Error details:", err); 
                 document.getElementById('live-grid').innerHTML = '<p style="color:#ff5555;">Could not load game data. Check the console for details.</p>';
             }
