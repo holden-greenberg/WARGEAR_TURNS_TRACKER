@@ -1,4 +1,4 @@
-name: Check WarGear Turns & Update Dashboard
+name: Update WarGear Dashboard
 
 on:
   schedule:
@@ -23,16 +23,15 @@ jobs:
     - name: Install dependencies
       run: pip install -r requirements.txt
 
-    - name: Run sync & notifications
+    - name: Run sync
       env:
-        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         PLAYERS_CONFIG: ${{ secrets.PLAYERS_CONFIG }}
       run: python fetch_games.py
 
-    - name: Commit and push dashboard & state
+    - name: Commit and push dashboard
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "WarGear Bot"
-        git add data/last_turns.json data/dashboard.json
-        git diff --staged --quiet || git commit -m "Update turns & dashboard data"
+        git add data/dashboard.json
+        git diff --staged --quiet || git commit -m "Update dashboard data"
         git push
