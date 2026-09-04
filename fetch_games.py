@@ -15,6 +15,24 @@ except Exception:
 DASHBOARD_FILE = "data/dashboard.json"
 os.makedirs("data", exist_ok=True)
 
+# Only games with at least this many of the core group members are counted -
+# keeps out games friends started with people outside the group. Names are
+# read from core_players.txt (one per line) so the group can be updated
+# without touching code.
+CORE_PLAYERS_FILE = "core_players.txt"
+MIN_CORE_PLAYERS = 2
+
+with open(CORE_PLAYERS_FILE) as f:
+    CORE_GROUP = {line.strip() for line in f if line.strip()}
+
+
+def count_core_players(game):
+    players = game.get("players")
+    if not isinstance(players, dict):
+        return 0
+    names = {p.get("name") for p in players.values() if isinstance(p, dict)}
+    return len(names & CORE_GROUP)
+
 # Tracker Era start: September 2, 2026, 00:00:00 UTC
 TRACKER_ERA_START = int(datetime(2026, 9, 2, 0, 0, 0).timestamp())
 
@@ -188,6 +206,10 @@ for player in players:
 
         # Filter out old finished games before the Tracker Era
         if game.get("gamestatus") == "Finished" and game["endstamp"] < TRACKER_ERA_START:
+            continue
+
+        # Filter out games that aren't mostly the core group
+        if count_core_players(game) < MIN_CORE_PLAYERS:
             continue
 
         all_games[game_id] = game
