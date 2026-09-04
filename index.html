@@ -105,8 +105,10 @@
                     // Build Roster
                     let players = game.players ? Object.values(game.players).filter(p => p && p.name).sort((a, b) => a.seat - b.seat) : [];
                     let rosterHtml = players.map(p => {
-                        let classes = 'player-row' + (activeTurnNames.includes(p.name) ? ' is-turn' : '') + (['Eliminated', 'Booted', 'Surrendered'].includes(p.status) ? ' eliminated' : '');
-                        return `<div class="${classes}"><span>${p.seat}. ${p.name}</span><span>${p.status}</span></div>`;
+                        let isEliminated = ['Eliminated', 'Booted', 'Surrendered'].includes(p.status) || !!p.eliminated_by;
+                        let displayStatus = isEliminated ? 'Eliminated' : 'Alive';
+                        let classes = 'player-row' + (activeTurnNames.includes(p.name) ? ' is-turn' : '') + (isEliminated ? ' eliminated' : '');
+                        return `<div class="${classes}"><span>${p.seat}. ${p.name}</span><span>${displayStatus}</span></div>`;
                     }).join('');
 
                     const cardInner = `
