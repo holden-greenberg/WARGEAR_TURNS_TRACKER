@@ -29,6 +29,8 @@
         
         .play-btn { display: block; text-align: center; background: #238636; color: white; text-decoration: none; padding: 10px; border-radius: 4px; margin-top: 15px; font-weight: bold; }
         .tag { background: #ffaa00; color: #000; padding: 2px 6px; border-radius: 12px; font-size: 0.8rem; font-weight: bold; float: right; }
+        .clock-games { color: #aaa; font-size: 0.8rem; margin: 2px 0 0 0; font-weight: normal; }
+        .clock-games .overdue { color: #ff6b6b; }
         
         ul { padding-left: 0; list-style-type: none; margin: 0; }
         li { padding: 4px 0; border-bottom: 1px dashed #333; }
@@ -60,13 +62,25 @@
         // This converts the date into a Unix timestamp to match the WarGear API format
         const TRACKER_ERA_START = new Date("2026-09-02T00:00:00").getTime() / 1000;
 
+        // Formats a countdown in seconds as "1d 4h", "5h 12m", "42m", etc.
+        function formatTimeLeft(seconds) {
+            if (seconds <= 0) return 'Overdue';
+            const d = Math.floor(seconds / 86400);
+            const h = Math.floor((seconds % 86400) / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            if (d > 0) return `${d}d ${h}h left`;
+            if (h > 0) return `${h}h ${m}m left`;
+            return `${m}m left`;
+        }
+
         async function loadDashboard() {
             try {
                 const res = await fetch('data/dashboard.json?_=' + Date.now());
                 const allGames = (await res.json()).games || [];
                 
-                let activeTurnsCount = {};
+                let activeTurnsGames = {};
                 let winCount = {};
+                const nowSeconds = Date.now() / 1000;
                 let liveHtml = '';
                 let archiveHtml = '';
 
@@ -90,8 +104,18 @@
                     
                     // Tally Active Turns (Only for live games)
                     if (!isFinished) {
+                        // Prefer a live countdown from turnstamp + boot_time; fall back to the
+                        // API's last-fetched time_remaining snapshot if either field is missing.
+                        let secondsLeft = null;
+                        if (typeof game.turnstamp === 'number' && typeof game.boot_time === 'number') {
+                            secondsLeft = game.boot_time - (nowSeconds - game.turnstamp);
+                        } else if (typeof game.time_remaining === 'number') {
+                            secondsLeft = game.time_remaining;
+                        }
+
                         activeTurnNames.forEach(name => {
-                            activeTurnsCount[name] = (activeTurnsCount[name] || 0) + 1;
+                            if (!activeTurnsGames[name]) activeTurnsGames[name] = [];
+                            activeTurnsGames[name].push({ gameName: game.name, secondsLeft });
                         });
                     }
 
@@ -145,8 +169,15 @@
                 document.getElementById('archive-grid').innerHTML = archiveHtml || '<p style="color:#aaa;">No Tracker Era games have finished yet. Play on!</p>';
                 
                 // Render Top Panels
-                document.getElementById('active-turns-list').innerHTML = Object.entries(activeTurnsCount).length ? 
-                    Object.entries(activeTurnsCount).sort((a,b) => b[1]-a[1]).map(([name, count]) => `<li><strong>${name}</strong> <span class="tag">${count}</span></li>`).join('') : '<li style="color:#aaa;">All quiet. No active turns.</li>';
+                document.getElementById('active-turns-list').innerHTML = Object.entries(activeTurnsGames).length ?
+                    Object.entries(activeTurnsGames).sort((a,b) => b[1].length-a[1].length).map(([name, games]) => {
+                        const gamesHtml = games.map(g => {
+                            const timeText = g.secondsLeft === null ? '' : ` — ${formatTimeLeft(g.secondsLeft)}`;
+                            const overdueClass = g.secondsLeft !== null && g.secondsLeft <= 0 ? ' class="overdue"' : '';
+                            return `<div${overdueClass}>${g.gameName}${timeText}</div>`;
+                        }).join('');
+                        return `<li><strong>${name}</strong> <span class="tag">${games.length}</span><div class="clock-games">${gamesHtml}</div></li>`;
+                    }).join('') : '<li style="color:#aaa;">All quiet. No active turns.</li>';
                 
                 document.getElementById('leaderboard-list').innerHTML = Object.entries(winCount).length ? 
                     Object.entries(winCount).sort((a,b) => b[1]-a[1]).map(([name, count]) => `<li><strong>${name}</strong> <span style="float:right;">${count} win${count > 1 ? 's' : ''}</span></li>`).join('') : '<li style="color:#aaa;">No wins recorded in the Tracker Era yet.</li>';
