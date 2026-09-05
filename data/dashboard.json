@@ -1,5 +1,5 @@
 {
-  "last_updated": 1788632154,
+  "last_updated": 1788639830,
   "total_games": 6,
   "games": [
     {
@@ -28,8 +28,8 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 10,
-          "count_fortifies": 1,
+          "count_attacks": 0,
+          "count_fortifies": 0,
           "turn_counter": 15,
           "autoboot_next_turn": 0,
           "name": "fitzyfbaby",
@@ -239,9 +239,9 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 0,
-          "count_fortifies": 0,
-          "turn_counter": 14,
+          "count_attacks": 1,
+          "count_fortifies": 1,
+          "turn_counter": 15,
           "autoboot_next_turn": 0,
           "name": "nico12",
           "condition_value": "?"
@@ -249,11 +249,11 @@
       },
       "eliminated": "a:3:{i:0;s:32:\"59be240211f1834f6d990356f257c7aa\";i:1;s:32:\"0a711ea50d3e18fef6b33484ffb57f86\";i:2;s:32:\"5e726124b708b92631a9932e51deb772\";}",
       "current_turn": [
-        "nico12"
+        "fitzyfbaby"
       ],
       "flags": "0",
       "gamestatus": "Live",
-      "turnstamp": "1788606242",
+      "turnstamp": "1788636287",
       "createstamp": "1786640274",
       "startstamp": "1786752714",
       "endstamp": 0,
@@ -297,7 +297,7 @@
       "scenario_name": "Default with History",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 60492
+      "time_remaining": 82859
     },
     {
       "gameid": "81542418",
@@ -593,7 +593,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 42977
+      "time_remaining": 35299
     },
     {
       "gameid": "81542603",
@@ -833,7 +833,7 @@
       "scenario_name": "",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 16954
+      "time_remaining": 9276
     },
     {
       "gameid": "81539522",
@@ -1103,7 +1103,7 @@
           "condition_hidden": "?",
           "count_attacks": 0,
           "count_fortifies": 0,
-          "turn_counter": 17,
+          "turn_counter": 18,
           "autoboot_next_turn": 0,
           "name": "nico12",
           "condition_value": "?"
@@ -1128,8 +1128,8 @@
           "condition_type": "?",
           "condition_hidden": "?",
           "count_attacks": 0,
-          "count_fortifies": 0,
-          "turn_counter": 17,
+          "count_fortifies": 1,
+          "turn_counter": 18,
           "autoboot_next_turn": 0,
           "name": "somethingpete",
           "condition_value": "?"
@@ -1153,8 +1153,8 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 18,
-          "count_fortifies": 2,
+          "count_attacks": 0,
+          "count_fortifies": 0,
           "turn_counter": 17,
           "autoboot_next_turn": 0,
           "name": "Bofa Deez",
@@ -1216,11 +1216,11 @@
       },
       "eliminated": "a:1:{i:0;s:32:\"501f9e9814f88d5c32add839250f67cd\";}",
       "current_turn": [
-        "nico12"
+        "Bofa Deez"
       ],
       "flags": "0",
       "gamestatus": "Live",
-      "turnstamp": "1788586619",
+      "turnstamp": "1788636715",
       "createstamp": "1787757043",
       "startstamp": "1787757212",
       "endstamp": 0,
@@ -1257,7 +1257,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 40876
+      "time_remaining": 83293
     },
     {
       "gameid": "81542982",
@@ -1471,7 +1471,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 36709
+      "time_remaining": 29030
     }
   ]
 }
