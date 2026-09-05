@@ -80,6 +80,8 @@
         .status-pill.dead { background: #ff5d6c20; color: var(--bad); }
         .status-pill.unknown { background: #ffffff14; color: var(--text-faint); }
 
+        .timeline-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--text-faint); font-size: 0.76rem; margin-bottom: 10px; }
+
         .avatar { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; font-size: 0.68rem; font-weight: 800; flex: none; box-shadow: 0 0 0 1px #ffffff14 inset; }
         .avatar.lg { width: 34px; height: 34px; font-size: 0.78rem; }
         .avatar-wrap { position: relative; display: inline-flex; width: 26px; height: 26px; flex: none; }
@@ -188,6 +190,11 @@
             if (d > 0) return `${d}d ${h}h`;
             if (h > 0) return `${h}h ${m}m`;
             return `${m}m`;
+        }
+
+        // Formats a unix timestamp (seconds) as a short local date, e.g. "Sep 3, 2026".
+        function formatDate(seconds) {
+            return new Date(seconds * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
         }
 
         // --- Player avatar colors, derived from each player's most-used WarGear color_code ---
@@ -554,8 +561,29 @@
                         </div>`;
                     }).join('');
 
+                    // Game timeline: started date, elapsed time (now for live games,
+                    // start-to-finish for finished ones), and turns played so far
+                    // (the highest per-player turn_counter stands in for the
+                    // current round number).
+                    const startTs = Number(game.startstamp) || Number(game.createstamp) || null;
+                    const endTs = Number(game.endstamp) || null;
+                    const startedText = startTs ? formatDate(startTs) : 'Unknown';
+                    const elapsedSeconds = startTs ? (isFinished && endTs ? endTs - startTs : nowSeconds - startTs) : null;
+                    const turnCounters = players.map(p => Number(p.turn_counter)).filter(Number.isFinite);
+                    const turnsPlayed = turnCounters.length ? Math.max(...turnCounters) : null;
+
+                    const timelineHtml = `
+                        <div class="timeline-meta">
+                            <span>Started ${startedText}</span>
+                            <span>${elapsedSeconds !== null ? formatDuration(elapsedSeconds) + ' elapsed' : 'Elapsed —'}</span>
+                            <span>${turnsPlayed !== null ? 'Turn ' + turnsPlayed : 'Turn —'}</span>
+                            ${isFinished ? `<span>Finished ${endTs ? formatDate(endTs) : 'Unknown'}</span>` : ''}
+                        </div>
+                    `;
+
                     const cardInner = `
                         <div style="color:var(--text-dim); font-size:0.82rem; margin-bottom:10px;">Status: ${game.gamestatus} &middot; Map: ${game.boardname}</div>
+                        ${timelineHtml}
                         <div style="color:var(--text-faint); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:2px;">Roster</div>
                         <div>${rosterHtml}</div>
                         <a href="https://www.wargear.net/games/player/${game.gameid}" class="play-btn" target="_blank">View Game</a>
