@@ -78,6 +78,7 @@
         .status-pill { font-size: 0.68rem; font-weight: 700; padding: 2px 8px; border-radius: 20px; white-space: nowrap; }
         .status-pill.alive { background: #3ddc8420; color: var(--good); }
         .status-pill.dead { background: #ff5d6c20; color: var(--bad); }
+        .status-pill.unknown { background: #ffffff14; color: var(--text-faint); }
 
         .avatar { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; font-size: 0.68rem; font-weight: 800; flex: none; box-shadow: 0 0 0 1px #ffffff14 inset; }
         .avatar.lg { width: 34px; height: 34px; font-size: 0.78rem; }
@@ -535,13 +536,21 @@
                         });
                     }
 
+                    // Elimination status is only public information in-game under
+                    // None/Light fog (full-board visibility) - under Medium/Heavy
+                    // fog it's only knowable locally, so we hide it here for any
+                    // game still live to match what players can actually see.
+                    // Finished games have already revealed everything.
+                    const showElimination = isFinished || ['None', 'Light'].includes(game.fog);
+
                     let rosterHtml = players.map(p => {
                         let isEliminated = ['Eliminated', 'Booted', 'Surrendered'].includes(p.status) || !!p.eliminated_by;
-                        let displayStatus = isEliminated ? 'Eliminated' : 'Alive';
-                        let classes = 'player-row' + (activeTurnNames.includes(p.name) ? ' is-turn' : '') + (isEliminated ? ' eliminated' : '');
+                        let classes = 'player-row' + (activeTurnNames.includes(p.name) ? ' is-turn' : '') + (showElimination && isEliminated ? ' eliminated' : '');
+                        let pillClass = showElimination ? (isEliminated ? 'dead' : 'alive') : 'unknown';
+                        let displayStatus = showElimination ? (isEliminated ? 'Eliminated' : 'Alive') : 'Hidden';
                         return `<div class="${classes}">
                             <span class="player-row-left">${avatarHtml(p.name)}<span class="pname">${p.seat}. ${p.name}</span></span>
-                            <span class="status-pill ${isEliminated ? 'dead' : 'alive'}">${displayStatus}</span>
+                            <span class="status-pill ${pillClass}">${displayStatus}</span>
                         </div>`;
                     }).join('');
 
