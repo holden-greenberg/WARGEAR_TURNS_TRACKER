@@ -1,5 +1,5 @@
 {
-  "last_updated": 1788624689,
+  "last_updated": 1788632154,
   "total_games": 6,
   "games": [
     {
@@ -297,7 +297,7 @@
       "scenario_name": "Default with History",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 67957
+      "time_remaining": 60492
     },
     {
       "gameid": "81542418",
@@ -593,7 +593,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 50442
+      "time_remaining": 42977
     },
     {
       "gameid": "81542603",
@@ -833,7 +833,7 @@
       "scenario_name": "",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 24419
+      "time_remaining": 16954
     },
     {
       "gameid": "81539522",
@@ -1235,7 +1235,7 @@
       "visitstamps": {
         "somethingpete": 1788588376,
         "doubledragon": 1787942923,
-        "nico12": 1788539830,
+        "nico12": 1788629965,
         "Invader Zim": 1788586652,
         "Bofa Deez": 1788546458
       },
@@ -1257,7 +1257,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 48343
+      "time_remaining": 40876
     },
     {
       "gameid": "81542982",
@@ -1471,7 +1471,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 44176
+      "time_remaining": 36709
     }
   ]
 }
