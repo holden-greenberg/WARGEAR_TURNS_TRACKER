@@ -66,15 +66,7 @@ def notify_player_turn(player_name, game_id, game):
     game_name = (game.get("name") or "").strip()
     board = game.get("boardname") or game.get("scenario_name") or ""
     title = f"Your turn: {game_name}" if game_name else "WarGear: it's your turn"
-
-    opponents = []
-    if isinstance(game.get("players"), dict):
-        opponents = [
-            p.get("name") for p in game["players"].values()
-            if isinstance(p, dict) and p.get("name") != player_name
-        ]
-    body_bits = [board, "vs " + ", ".join(filter(None, opponents)) if opponents else ""]
-    body = " · ".join(b for b in body_bits if b) or "It's your turn."
+    body = f"on {board}" if board else "It's your turn."
 
     try:
         requests.post(
