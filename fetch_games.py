@@ -63,23 +63,28 @@ def notify_player_turn(player_name, game_id, game):
     if turn_key in _notified_turns:
         return
 
-    board = game.get("boardname") or game.get("scenario_name") or "your game"
+    game_name = (game.get("name") or "").strip()
+    board = game.get("boardname") or game.get("scenario_name") or ""
+    title = f"Your turn: {game_name}" if game_name else "WarGear: it's your turn"
+
     opponents = []
     if isinstance(game.get("players"), dict):
         opponents = [
             p.get("name") for p in game["players"].values()
             if isinstance(p, dict) and p.get("name") != player_name
         ]
-    vs = " vs " + ", ".join(filter(None, opponents)) if opponents else ""
+    body_bits = [board, "vs " + ", ".join(filter(None, opponents)) if opponents else ""]
+    body = " · ".join(b for b in body_bits if b) or "It's your turn."
 
     try:
         requests.post(
             f"{NTFY_SERVER}/{topic}",
-            data=f"Your turn on {board}{vs}".encode("utf-8"),
+            data=body.encode("utf-8"),
             headers={
-                "Title": "WarGear: it's your turn",
+                # ntfy header values must be ASCII; drop anything exotic in the name
+                "Title": title.encode("ascii", "ignore").decode() or "WarGear: it's your turn",
                 "Tags": "game_die",
-                "Click": f"https://www.wargear.net/games/play/{game_id}",
+                "Click": f"https://www.wargear.net/games/player/{game_id}",
             },
             timeout=15,
         )
