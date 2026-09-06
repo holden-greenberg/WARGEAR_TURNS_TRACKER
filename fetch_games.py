@@ -14,7 +14,78 @@ except Exception:
 
 DASHBOARD_FILE = "data/dashboard.json"
 TURN_STATS_FILE = "data/turn_stats.json"
+NOTIFY_STATE_FILE = "data/notify_state.json"
 os.makedirs("data", exist_ok=True)
+
+# --- "It's your turn" push notifications -------------------------------------
+# When a watched player moves onto turn in a Live game, fire a push via ntfy
+# (https://ntfy.sh - free, no account, has iOS/Android apps). Each player gets
+# their own topic, so a friend only hears about their own turns. Configure with
+# repo secrets exposed as env vars:
+#   NOTIFY_TOPICS - JSON object mapping WarGear player name -> ntfy topic, e.g.
+#                   {"HoldenGreenberg": "wg-turn-holden-9f3k2x"}
+#                   A player with no entry is simply never notified.
+#   NTFY_SERVER   - base URL, defaults to https://ntfy.sh
+#   NTFY_TOPIC / NOTIFY_PLAYER - legacy single-player form, still honored.
+NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+
+try:
+    NOTIFY_TOPICS = json.loads(os.environ.get("NOTIFY_TOPICS", "{}"))
+    if not isinstance(NOTIFY_TOPICS, dict):
+        NOTIFY_TOPICS = {}
+except Exception:
+    NOTIFY_TOPICS = {}
+
+_legacy_topic = os.environ.get("NTFY_TOPIC", "").strip()
+if _legacy_topic:
+    NOTIFY_TOPICS.setdefault(
+        os.environ.get("NOTIFY_PLAYER", "HoldenGreenberg").strip(), _legacy_topic
+    )
+
+try:
+    with open(NOTIFY_STATE_FILE) as f:
+        _notified_turns = set(json.load(f).get("notified", []))
+except Exception:
+    _notified_turns = set()
+
+
+def notify_player_turn(player_name, game_id, game):
+    """Send one push the first time we see `player_name` on turn for a given
+    (game, turnstamp). Keyed by turnstamp + player so each real turn notifies
+    once, even if a later run re-diffs against an older snapshot."""
+    topic = NOTIFY_TOPICS.get(player_name)
+    if not topic:
+        return
+    if game.get("gamestatus") != "Live":
+        return
+
+    turn_key = f"{game_id}:{game.get('turnstamp')}:{player_name}"
+    if turn_key in _notified_turns:
+        return
+
+    board = game.get("boardname") or game.get("scenario_name") or "your game"
+    opponents = []
+    if isinstance(game.get("players"), dict):
+        opponents = [
+            p.get("name") for p in game["players"].values()
+            if isinstance(p, dict) and p.get("name") != player_name
+        ]
+    vs = " vs " + ", ".join(filter(None, opponents)) if opponents else ""
+
+    try:
+        requests.post(
+            f"{NTFY_SERVER}/{topic}",
+            data=f"Your turn on {board}{vs}".encode("utf-8"),
+            headers={
+                "Title": "WarGear: it's your turn",
+                "Tags": "game_die",
+                "Click": f"https://www.wargear.net/games/play/{game_id}",
+            },
+            timeout=15,
+        )
+        _notified_turns.add(turn_key)
+    except Exception as e:
+        print(f"ntfy notify failed for game {game_id}: {e}")
 
 # Load the previous snapshot (if any) so we can detect turn handoffs between
 # runs and accumulate real elapsed-time-per-turn stats over time - a single
@@ -76,6 +147,16 @@ def record_turn_handoff(game_id, old_game, new_game):
         stats = game_pending.setdefault(name, {"turns": 0, "total_seconds": 0})
         stats["turns"] += 1
         stats["total_seconds"] += elapsed
+
+
+def notify_on_turn_change(game_id, old_game, new_game):
+    """Fire a push to each watched player who just moved onto turn."""
+    if not NOTIFY_TOPICS:
+        return
+    old_names = normalize_turn_names(old_game.get("current_turn"))
+    new_names = normalize_turn_names(new_game.get("current_turn"))
+    for player_name in (new_names - old_names) & set(NOTIFY_TOPICS):
+        notify_player_turn(player_name, game_id, new_game)
 
 
 def finalize_turn_stats_if_finished(game_id, game):
@@ -289,6 +370,7 @@ for player in players:
         old_game = previous_games_by_id.get(game_id)
         if old_game:
             record_turn_handoff(game_id, old_game, game)
+            notify_on_turn_change(game_id, old_game, game)
         finalize_turn_stats_if_finished(game_id, game)
 
         all_games[game_id] = game
@@ -300,6 +382,15 @@ with open(TURN_STATS_FILE, "w") as f:
         "players": turn_stats,
         "pending": pending_turn_stats,
         "finalized_games": sorted(finalized_games)
+    }, f, indent=2)
+
+# Save notification dedup state (keep only turns for games still present, so
+# this file can't grow without bound)
+_live_ids = set(all_games)
+with open(NOTIFY_STATE_FILE, "w") as f:
+    json.dump({
+        "last_updated": int(time.time()),
+        "notified": sorted(k for k in _notified_turns if k.split(":", 1)[0] in _live_ids)
     }, f, indent=2)
 
 # Save dashboard data
