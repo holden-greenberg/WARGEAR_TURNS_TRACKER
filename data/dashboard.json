@@ -1,5 +1,5 @@
 {
-  "last_updated": 1788712114,
+  "last_updated": 1788719498,
   "total_games": 6,
   "games": [
     {
@@ -296,7 +296,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 84002
+      "time_remaining": 76617
     },
     {
       "gameid": "81541323",
@@ -593,7 +593,7 @@
       "scenario_name": "Default with History",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 72678
+      "time_remaining": 65293
     },
     {
       "gameid": "81542603",
@@ -833,7 +833,7 @@
       "scenario_name": "",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 57903
+      "time_remaining": 50518
     },
     {
       "gameid": "81539522",
@@ -1257,7 +1257,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 57729
+      "time_remaining": 50341
     },
     {
       "gameid": "81542982",
