@@ -461,7 +461,8 @@
                     fetch('data/dashboard.json?_=' + Date.now()),
                     fetch('data/turn_stats.json?_=' + Date.now())
                 ]);
-                const allGames = (await dashRes.json()).games || [];
+                const dashboard = await dashRes.json();
+                const allGames = dashboard.games || [];
                 const turnStats = turnStatsRes.ok ? (await turnStatsRes.json()).players || {} : {};
 
                 playerColorHex = tallyPlayerColors(allGames);
@@ -676,7 +677,8 @@
 
                 renderStatsTable();
 
-                document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const stamp = dashboard.last_updated ? new Date(dashboard.last_updated * 1000) : new Date();
+                document.getElementById('last-updated').textContent = 'Updated ' + stamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
             } catch (err) {
                 console.error("Error details:", err);

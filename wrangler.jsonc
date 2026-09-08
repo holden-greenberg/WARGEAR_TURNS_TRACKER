@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wargear-turns-tracker",
+  "main": "worker/index.js",
+  "compatibility_date": "2025-09-01",
+
+  // Static site (public/index.html) is served for every non-/data/ path.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+
+  // Poll WarGear once a minute.
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+
+  // All persistent state lives in one key ("state") in this namespace.
+  // Create it once with:  npx wrangler kv namespace create WG_STATE
+  // then paste the printed id below.
+  "kv_namespaces": [
+    {
+      "binding": "WG_STATE",
+      "id": "PASTE_KV_NAMESPACE_ID_HERE"
+    }
+  ],
+
+  "vars": {
+    "CORE_PLAYERS": "HoldenGreenberg,Invader Zim,fitzyfbaby,nico12,harambae,MeadeBot,Bofa Deez,jgliks,somethingpete",
+    "MIN_CORE_PLAYERS": "2",
+    "NTFY_SERVER": "https://ntfy.sh"
+  },
+
+  // Secrets (set with `npx wrangler secret put <NAME>`), not stored here:
+  //   PLAYERS_CONFIG  - JSON array: [{ "api_key": "..." }, ...]
+  //   NOTIFY_TOPICS   - JSON object: { "HoldenGreenberg": "wg-turn-holden-xxxx" }
+
+  "observability": {
+    "enabled": true
+  }
+}
