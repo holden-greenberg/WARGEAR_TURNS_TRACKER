@@ -132,8 +132,15 @@
         #skill-tip { position: fixed; z-index: 100; width: 270px; padding: 11px 13px; background: var(--panel-2); border: 1px solid #ffffff26; border-radius: 9px; color: var(--text-dim); font-size: 0.74rem; font-weight: 500; line-height: 1.5; text-transform: none; letter-spacing: 0; box-shadow: 0 10px 30px -6px #000c; pointer-events: none; }
         #skill-tip strong { color: var(--text); font-weight: 700; }
 
+        /* Skill Rating cell: the number is right-aligned to a fixed line and
+           the delta sits in a fixed-width gutter, so both read as straight
+           vertical columns down the table regardless of digit count. */
+        td.skill-cell { text-align: right; }
+        td.skill-cell .skill-num { font-variant-numeric: tabular-nums; }
+        td.skill-cell .skill-delta-wrap { display: inline-block; width: 46px; margin-left: 8px; text-align: left; }
+
         /* Rating change from a player's most recent game */
-        .delta { margin-left: 6px; font-size: 0.72rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+        .delta { font-size: 0.72rem; font-weight: 700; font-variant-numeric: tabular-nums; }
         .delta.up { color: #8affc0; }
         .delta.down { color: #ff9ba6; }
 
@@ -489,7 +496,7 @@
             tbody.innerHTML = sorted.length ? sorted.map((r, i) => `
                 <tr>
                     <td class="name-cell"><div class="name-cell-inner"><span class="rank-num">${i + 1}</span>${avatarHtml(r.name)}<span>${r.name}</span></div></td>
-                    <td style="${r.skill !== null ? ratingColor(r.skill, minSkill, maxSkill) : ''}">${r.skill !== null ? Math.round(r.skill) + deltaBadge(r.skillDelta) : '—'}</td>
+                    <td class="skill-cell" style="${r.skill !== null ? ratingColor(r.skill, minSkill, maxSkill) : ''}">${r.skill !== null ? `<span class="skill-num">${Math.round(r.skill)}</span><span class="skill-delta-wrap">${deltaBadge(r.skillDelta)}</span>` : '—'}</td>
                     <td>${r.wins}</td>
                     <td>${r.gamesPlayed ? Math.round(r.winRate * 100) + '%' : '—'}</td>
                     <td>${r.gamesPlayed}</td>
