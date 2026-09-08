@@ -3,8 +3,8 @@
 One Cloudflare Worker does everything:
 
 - **`scheduled()`** runs every minute (`triggers.crons` in `wrangler.jsonc`): polls the
-  WarGear "my games" API for each configured player, rebuilds the dashboard and
-  turn-speed stats, and fires "it's your turn" pushes via [ntfy](https://ntfy.sh).
+  WarGear "my games" API for each configured player and rebuilds the dashboard and
+  turn-speed stats.
 - **`fetch()`** serves the static site from `public/` and answers
   `/data/dashboard.json` and `/data/turn_stats.json` from KV.
 
@@ -31,14 +31,10 @@ npx wrangler login
 #    wrangler.jsonc -> kv_namespaces[0].id
 npx wrangler kv namespace create WG_STATE
 
-# 3. Set the two secrets (values are NOT stored in the repo)
+# 3. Set the one secret (value is NOT stored in the repo)
 #    PLAYERS_CONFIG - JSON array of WarGear api keys:
 #      [{"api_key":"...player one..."},{"api_key":"...player two..."}]
 npx wrangler secret put PLAYERS_CONFIG
-#    NOTIFY_TOPICS - JSON map of WarGear name -> ntfy topic (optional; omit to
-#    disable pushes). Each friend subscribes to their own topic in the ntfy app.
-#      {"HoldenGreenberg":"wg-turn-holden-9f3k2x"}
-npx wrangler secret put NOTIFY_TOPICS
 
 # 4. Deploy
 npx wrangler deploy

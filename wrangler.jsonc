@@ -30,13 +30,11 @@
 
   "vars": {
     "CORE_PLAYERS": "HoldenGreenberg,Invader Zim,fitzyfbaby,nico12,harambae,MeadeBot,Bofa Deez,jgliks,somethingpete",
-    "MIN_CORE_PLAYERS": "2",
-    "NTFY_SERVER": "https://ntfy.sh"
+    "MIN_CORE_PLAYERS": "2"
   },
 
-  // Secrets (set with `npx wrangler secret put <NAME>`), not stored here:
+  // Secret (set with `npx wrangler secret put PLAYERS_CONFIG`), not stored here:
   //   PLAYERS_CONFIG  - JSON array: [{ "api_key": "..." }, ...]
-  //   NOTIFY_TOPICS   - JSON object: { "HoldenGreenberg": "wg-turn-holden-xxxx" }
 
   "observability": {
     "enabled": true

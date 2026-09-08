@@ -2,10 +2,9 @@
  * WarGear Turns Tracker - single Cloudflare Worker.
  *
  * On a 1-minute cron it polls the WarGear "my games" API for every configured
- * player, rebuilds the dashboard + turn-speed stats, fires "it's your turn"
- * pushes via ntfy, and stashes everything in one KV key. The fetch handler
- * serves the static site (public/) plus /data/dashboard.json and
- * /data/turn_stats.json straight from that KV key.
+ * player, rebuilds the dashboard + turn-speed stats, and stashes everything in
+ * one KV key. The fetch handler serves the static site (public/) plus
+ * /data/dashboard.json and /data/turn_stats.json straight from that KV key.
  *
  * All persistent state lives in a single KV entry ("state") so a run that
  * changes nothing performs zero writes - that keeps us inside the KV free
@@ -17,9 +16,7 @@
  *   CORE_PLAYERS      comma-separated WarGear names; a game must include at
  *                     least MIN_CORE_PLAYERS of them to be tracked
  *   MIN_CORE_PLAYERS  string int, default "2"
- *   NTFY_SERVER       base URL, default "https://ntfy.sh"
  *   PLAYERS_CONFIG    secret: JSON array of { "api_key": "..." }
- *   NOTIFY_TOPICS     secret: JSON object { "WarGearName": "ntfy-topic" }
  */
 
 const GAME_LIST_URL = "https://www.wargear.net/rest/GetGameList/my";
@@ -262,54 +259,9 @@ function setsEqual(a, b) {
   return true;
 }
 
-// --- ntfy notifications ------------------------------------------------
-
-async function notifyPlayerTurn(env, notifyTopics, notified, playerName, gameId, game) {
-  const topic = notifyTopics[playerName];
-  if (!topic) return;
-  if (game.gamestatus !== "Live") return;
-
-  const turnKey = `${gameId}:${game.turnstamp}:${playerName}`;
-  if (notified.has(turnKey)) return;
-
-  const server = (env.NTFY_SERVER || "https://ntfy.sh").replace(/\/+$/, "");
-  const gameName = (game.name || "").trim();
-  const board = game.boardname || game.scenario_name || "";
-  const rawTitle = gameName ? `Your turn: ${gameName}` : "WarGear: it's your turn";
-  // ntfy header values must be ASCII.
-  const title = rawTitle.replace(/[^\x00-\x7F]/g, "") || "WarGear: it's your turn";
-  const body = board ? `on ${board}` : "It's your turn.";
-
-  try {
-    await fetch(`${server}/${topic}`, {
-      method: "POST",
-      body,
-      headers: {
-        Title: title,
-        Tags: "game_die",
-        Click: `https://www.wargear.net/games/player/${gameId}`,
-      },
-    });
-    notified.add(turnKey);
-  } catch (e) {
-    console.log(`ntfy notify failed for game ${gameId}: ${e}`);
-  }
-}
-
-async function notifyOnTurnChange(env, notifyTopics, notified, gameId, oldGame, newGame) {
-  if (Object.keys(notifyTopics).length === 0) return;
-  const oldNames = normalizeTurnNames(oldGame.current_turn);
-  const newNames = normalizeTurnNames(newGame.current_turn);
-  for (const name of newNames) {
-    if (oldNames.has(name)) continue;
-    if (!(name in notifyTopics)) continue;
-    await notifyPlayerTurn(env, notifyTopics, notified, name, gameId, newGame);
-  }
-}
-
 // --- the sync -----------------------------------------------------------
 
-const EMPTY_STATE = { games: [], turn_stats: {}, pending: {}, finalized: [], notified: [], cursors: {} };
+const EMPTY_STATE = { games: [], turn_stats: {}, pending: {}, finalized: [], cursors: {} };
 
 function parseJsonEnv(value, fallback) {
   try {
@@ -322,7 +274,6 @@ function parseJsonEnv(value, fallback) {
 
 async function runSync(env) {
   const players = parseJsonEnv(env.PLAYERS_CONFIG, []);
-  const notifyTopics = parseJsonEnv(env.NOTIFY_TOPICS, {});
   const coreSet = new Set(
     (env.CORE_PLAYERS || "")
       .split(",")
@@ -340,7 +291,6 @@ async function runSync(env) {
   const turnStats = prev.turn_stats || {};
   const pending = prev.pending || {};
   const finalized = new Set(prev.finalized || []);
-  const notified = new Set(prev.notified || []);
   const cursors = { ...(prev.cursors || {}) };
 
   const budget = newBudget();
@@ -376,27 +326,18 @@ async function runSync(env) {
       if (countCorePlayers(game, coreSet) < minCore) continue;
 
       const oldGame = previousById[gameId];
-      if (oldGame) {
-        recordTurnHandoff(gameId, oldGame, game, pending);
-        await notifyOnTurnChange(env, notifyTopics, notified, gameId, oldGame, game);
-      }
+      if (oldGame) recordTurnHandoff(gameId, oldGame, game, pending);
       finalizeTurnStatsIfFinished(gameId, game, turnStats, pending, finalized);
 
       allGames[gameId] = game;
     }
   }
 
-  const liveIds = new Set(Object.keys(allGames));
-  const prunedNotified = [...notified]
-    .filter((k) => liveIds.has(k.split(":", 1)[0]))
-    .sort();
-
   const next = {
     games: Object.values(allGames),
     turn_stats: turnStats,
     pending,
     finalized: [...finalized].sort(),
-    notified: prunedNotified,
     cursors,
   };
 
@@ -417,7 +358,6 @@ function stableState(s) {
     turn_stats: s.turn_stats || {},
     pending: s.pending || {},
     finalized: (s.finalized || []).slice().sort(),
-    notified: (s.notified || []).slice().sort(),
     cursors: s.cursors || {},
   });
 }
