@@ -126,6 +126,17 @@
         .name-cell-inner { display: flex; align-items: center; gap: 10px; }
         .rank-num { color: var(--text-faint); font-weight: 600; font-size: 0.8rem; width: 18px; display: inline-block; text-align: right; }
 
+        /* "How is this calculated" marker on the Skill Rating header */
+        .th-info { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 5px; padding: 0; border-radius: 50%; border: 1px solid var(--text-faint); background: transparent; color: var(--text-faint); font: italic 700 0.64rem/1 Georgia, "Times New Roman", serif; cursor: help; vertical-align: middle; text-transform: none; letter-spacing: 0; }
+        .th-info:hover, .th-info:focus-visible { color: #fff; border-color: #fff; outline: none; }
+        #skill-tip { position: fixed; z-index: 100; width: 270px; padding: 11px 13px; background: var(--panel-2); border: 1px solid #ffffff26; border-radius: 9px; color: var(--text-dim); font-size: 0.74rem; font-weight: 500; line-height: 1.5; text-transform: none; letter-spacing: 0; box-shadow: 0 10px 30px -6px #000c; pointer-events: none; }
+        #skill-tip strong { color: var(--text); font-weight: 700; }
+
+        /* Rating change from a player's most recent game */
+        .delta { margin-left: 6px; font-size: 0.72rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+        .delta.up { color: #8affc0; }
+        .delta.down { color: #ff9ba6; }
+
         .empty-msg { color: var(--text-faint); padding: 6px 4px; }
     </style>
 </head>
@@ -146,7 +157,7 @@
             <thead>
                 <tr>
                     <th data-key="name" data-type="string">Player</th>
-                    <th data-key="elo" data-type="number">Elo</th>
+                    <th data-key="skill" data-type="number">Skill Rating<button type="button" class="th-info" id="skill-info" aria-label="How Skill Rating is calculated">i</button></th>
                     <th data-key="wins" data-type="number">Wins</th>
                     <th data-key="winRate" data-type="number">Win %</th>
                     <th data-key="gamesPlayed" data-type="number">Games</th>
@@ -158,6 +169,7 @@
             <tbody id="stats-tbody"><tr><td colspan="8">Loading...</td></tr></tbody>
         </table>
     </div>
+    <div id="skill-tip" role="tooltip" hidden><strong>Skill Rating</strong> estimates how strong each player is, from every finished Tracker Era game. What counts is where you finish: winning is best, and if you don't win, lasting more turns than the other losers still helps. Beating a higher-rated opponent is worth more than beating a weaker one. New players start low and climb as the rating grows more confident in them. The &#9650;&#9660; shows how much your most recent game moved it.</div>
 
     <div class="section-head"><h2>Live Games</h2></div>
     <div class="grid" id="live-grid"></div>
@@ -349,63 +361,112 @@
         }
 
         let statsRows = [];
-        let sortState = { key: 'elo', dir: -1 };
+        let sortState = { key: 'skill', dir: -1 };
 
-        // Multiplayer Elo: every finished game is decomposed into pairwise
-        // matchups between its players, ranked winner-first then by how many
-        // turns each eliminated player survived. Ratings update per pair
-        // using the standard Elo expectation, un-normalized by player count -
-        // so an 8-player FFA (7 pairwise results) moves a rating far more
-        // than a 3-player game (2 pairwise results), and beating a
-        // higher-rated opponent earns more than beating a lower-rated one.
-        const ELO_BASE = 1500;
-        const ELO_K = 20;
+        // Skill Rating: an OpenSkill / Weng-Lin (Bradley-Terry, full pairing)
+        // model. Each finished game is treated as a free-for-all ranking -
+        // winners first, then everyone else ordered by how many turns they
+        // survived. Every player carries a skill estimate (mu) and an
+        // uncertainty (sigma); playing more games shrinks sigma. The number
+        // shown in the table is the conservative estimate mu - 3*sigma,
+        // rescaled to an Elo-like band, so an unproven player ranks low and
+        // rises only as the model grows confident in them. Beating a
+        // higher-rated opponent moves the rating more than beating a weaker
+        // one, and one big free-for-all no longer counts as several games.
+        const SR_MU0 = 25;
+        const SR_SIGMA0 = 25 / 3;
+        const SR_BETA_SQ = (SR_SIGMA0 / 2) ** 2;   // matchup randomness
+        const SR_TAU_SQ = (SR_SIGMA0 / 100) ** 2;  // per-game uncertainty bump
+        const SR_KAPPA = 0.0001;                    // floor on sigma shrink
+        const SR_Z = 3;                             // conservatism (mu - Z*sigma)
+        const srDisplay = (mu, sigma) => Math.round((mu - SR_Z * sigma) * 24 + 1000);
 
-        function computePlayerElo(finishedGames) {
-            const ratings = {};
-            const gamesForElo = [...finishedGames].sort((a, b) => (a.endstamp || 0) - (b.endstamp || 0));
+        // Returns { ratings: {name: {mu, sigma, display}}, lastDelta: {name: n} }
+        // where lastDelta is the change in display rating from that player's
+        // most recent finished game.
+        function computeSkillRatings(finishedGames) {
+            const state = {};      // name -> { mu, sigma }
+            const lastDelta = {};  // name -> display-rating change from last game
+            const games = [...finishedGames].sort((a, b) => (a.endstamp || 0) - (b.endstamp || 0));
 
-            gamesForElo.forEach(game => {
+            games.forEach(game => {
                 const players = game.players ? Object.values(game.players).filter(p => p && p.name) : [];
                 if (players.length < 2) return;
 
                 const winners = new Set(Array.isArray(game.winners) ? game.winners.filter(w => w !== null) : []);
-                const ranked = players.map(p => ({
+                const entries = players.map(p => ({
                     name: p.name,
-                    tier: winners.has(p.name) ? 1 : 0,
+                    isWinner: winners.has(p.name) ? 1 : 0,
                     survival: typeof p.turn_counter === 'number' ? p.turn_counter : -1
                 }));
-
-                ranked.forEach(p => { if (!(p.name in ratings)) ratings[p.name] = ELO_BASE; });
-                const deltas = {};
-                ranked.forEach(p => { deltas[p.name] = 0; });
-
-                for (let i = 0; i < ranked.length; i++) {
-                    for (let j = i + 1; j < ranked.length; j++) {
-                        const a = ranked[i], b = ranked[j];
-                        let scoreA;
-                        if (a.tier !== b.tier) scoreA = a.tier > b.tier ? 1 : 0;
-                        else if (a.survival !== b.survival) scoreA = a.survival > b.survival ? 1 : 0;
-                        else scoreA = 0.5;
-                        const scoreB = 1 - scoreA;
-
-                        const ratingA = ratings[a.name], ratingB = ratings[b.name];
-                        const expectedA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
-                        const expectedB = 1 - expectedA;
-
-                        deltas[a.name] += ELO_K * (scoreA - expectedA);
-                        deltas[b.name] += ELO_K * (scoreB - expectedB);
+                // Finish order: winners, then by turns survived (desc). rank 0 = best.
+                entries.sort((a, b) => (b.isWinner - a.isWinner) || (b.survival - a.survival));
+                let rank = 0;
+                entries.forEach((e, idx) => {
+                    if (idx > 0) {
+                        const prev = entries[idx - 1];
+                        if (prev.isWinner !== e.isWinner || prev.survival !== e.survival) rank = idx;
                     }
-                }
+                    e.rank = rank;
+                });
 
-                Object.keys(deltas).forEach(name => { ratings[name] += deltas[name]; });
+                entries.forEach(e => {
+                    if (!state[e.name]) state[e.name] = { mu: SR_MU0, sigma: SR_SIGMA0 };
+                });
+                const before = {};
+                entries.forEach(e => { before[e.name] = srDisplay(state[e.name].mu, state[e.name].sigma); });
+
+                // Bradley-Terry, full pairing. Add per-game uncertainty (tau) first.
+                const work = entries.map(e => ({
+                    name: e.name,
+                    rank: e.rank,
+                    mu: state[e.name].mu,
+                    sigmaSq: state[e.name].sigma ** 2 + SR_TAU_SQ
+                }));
+                const next = {};
+                work.forEach(a => {
+                    let omega = 0, delta = 0;
+                    work.forEach(b => {
+                        if (a === b) return;
+                        const c = Math.sqrt(a.sigmaSq + b.sigmaSq + 2 * SR_BETA_SQ);
+                        const expA = 1 / (1 + Math.exp((b.mu - a.mu) / c));
+                        const score = a.rank < b.rank ? 1 : a.rank > b.rank ? 0 : 0.5;
+                        const gamma = Math.sqrt(a.sigmaSq) / c;
+                        omega += (a.sigmaSq / c) * (score - expA);
+                        delta += (gamma * a.sigmaSq / (c * c)) * expA * (1 - expA);
+                    });
+                    const muNew = a.mu + omega;
+                    const sigmaSqNew = a.sigmaSq * Math.max(1 - delta, SR_KAPPA);
+                    next[a.name] = { mu: muNew, sigma: Math.sqrt(sigmaSqNew) };
+                });
+
+                entries.forEach(e => {
+                    state[e.name] = next[e.name];
+                    lastDelta[e.name] = srDisplay(next[e.name].mu, next[e.name].sigma) - before[e.name];
+                });
             });
 
-            return ratings;
+            const ratings = {};
+            Object.keys(state).forEach(name => {
+                ratings[name] = {
+                    mu: state[name].mu,
+                    sigma: state[name].sigma,
+                    display: srDisplay(state[name].mu, state[name].sigma)
+                };
+            });
+            return { ratings, lastDelta };
+        }
+
+        // ▲ green / ▼ red change from a player's most recent game.
+        function deltaBadge(d) {
+            if (d === null || d === undefined) return '';
+            const v = Math.round(d);
+            if (v === 0) return '';
+            return `<span class="delta ${v > 0 ? 'up' : 'down'}">${v > 0 ? '▲' : '▼'}${Math.abs(v)}</span>`;
         }
 
         // Green (best) to red (worst), scaled across the players currently in the table.
-        function eloColor(elo, min, max) {
+        function ratingColor(elo, min, max) {
             if (elo === null || elo === undefined || min === max) return '';
             const t = Math.max(0, Math.min(1, (elo - min) / (max - min)));
             const hue = t * 120;
@@ -421,14 +482,14 @@
                 return dir * ((av ?? -Infinity) - (bv ?? -Infinity));
             });
 
-            const playedElos = statsRows.filter(r => r.gamesPlayed).map(r => r.elo);
-            const minElo = playedElos.length ? Math.min(...playedElos) : 0;
-            const maxElo = playedElos.length ? Math.max(...playedElos) : 0;
+            const playedSkills = statsRows.filter(r => r.skill !== null).map(r => r.skill);
+            const minSkill = playedSkills.length ? Math.min(...playedSkills) : 0;
+            const maxSkill = playedSkills.length ? Math.max(...playedSkills) : 0;
 
             tbody.innerHTML = sorted.length ? sorted.map((r, i) => `
                 <tr>
                     <td class="name-cell"><div class="name-cell-inner"><span class="rank-num">${i + 1}</span>${avatarHtml(r.name)}<span>${r.name}</span></div></td>
-                    <td style="${r.gamesPlayed ? eloColor(r.elo, minElo, maxElo) : ''}">${r.gamesPlayed ? Math.round(r.elo) : '—'}</td>
+                    <td style="${r.skill !== null ? ratingColor(r.skill, minSkill, maxSkill) : ''}">${r.skill !== null ? Math.round(r.skill) + deltaBadge(r.skillDelta) : '—'}</td>
                     <td>${r.wins}</td>
                     <td>${r.gamesPlayed ? Math.round(r.winRate * 100) + '%' : '—'}</td>
                     <td>${r.gamesPlayed}</td>
@@ -454,6 +515,31 @@
                 renderStatsTable();
             });
         });
+
+        // Skill Rating header "(i)" tooltip. The stats table lives in a
+        // scroll container that would clip an absolutely-positioned tip, so
+        // position a shared fixed element on hover/focus instead.
+        (function initSkillTip() {
+            const info = document.getElementById('skill-info');
+            const tip = document.getElementById('skill-tip');
+            if (!info || !tip) return;
+            const show = () => {
+                tip.hidden = false;
+                const r = info.getBoundingClientRect();
+                const tw = tip.offsetWidth, th = tip.offsetHeight;
+                let left = Math.min(Math.max(8, r.left + r.width / 2 - tw / 2), window.innerWidth - tw - 8);
+                let top = r.bottom + 8;
+                if (top + th > window.innerHeight - 8) top = r.top - th - 8;
+                tip.style.left = left + 'px';
+                tip.style.top = top + 'px';
+            };
+            const hide = () => { tip.hidden = true; };
+            info.addEventListener('mouseenter', show);
+            info.addEventListener('mouseleave', hide);
+            info.addEventListener('focus', show);
+            info.addEventListener('blur', hide);
+            info.addEventListener('click', e => { e.stopPropagation(); });
+        })();
 
         async function loadDashboard() {
             try {
@@ -642,7 +728,8 @@
                     }).join('') : '<p class="empty-msg" style="margin:0;">All quiet. No active turns.</p>';
 
                 // Build the combined per-player stats table
-                const eloRatings = computePlayerElo(validGames.filter(g => g.gamestatus === 'Finished'));
+                const { ratings: skillRatings, lastDelta: skillDelta } =
+                    computeSkillRatings(validGames.filter(g => g.gamestatus === 'Finished'));
 
                 let allNames = new Set([
                     ...Object.keys(winCount),
@@ -650,7 +737,7 @@
                     ...Object.keys(survivalTurns),
                     ...Object.keys(eliminationCount),
                     ...Object.keys(turnStats),
-                    ...Object.keys(eloRatings)
+                    ...Object.keys(skillRatings)
                 ]);
 
                 statsRows = Array.from(allNames).map(name => {
@@ -664,7 +751,8 @@
 
                     return {
                         name,
-                        elo: eloRatings[name] ?? ELO_BASE,
+                        skill: skillRatings[name] ? skillRatings[name].display : null,
+                        skillDelta: skillDelta[name] ?? null,
                         wins,
                         gamesPlayed,
                         winRate: gamesPlayed ? wins / gamesPlayed : 0,

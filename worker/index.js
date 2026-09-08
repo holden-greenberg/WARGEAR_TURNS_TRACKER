@@ -187,6 +187,9 @@ function parsePhpStringArray(value) {
 
 function normalizeGame(game) {
   game.endstamp = parseInt(game.endstamp || 0, 10) || 0;
+  // WarGear sends turnstamp as a numeric string; recordTurnHandoff needs a
+  // real number or it bails and no turn-time stats are ever accumulated.
+  game.turnstamp = parseInt(game.turnstamp || 0, 10) || 0;
 
   const idToName = {};
   if (game.players && typeof game.players === "object") {
