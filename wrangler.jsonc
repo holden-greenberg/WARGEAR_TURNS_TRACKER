@@ -4,6 +4,9 @@
   "main": "worker/index.js",
   "compatibility_date": "2025-09-01",
 
+  "workers_dev": true,
+  "preview_urls": false,
+
   // Static site (public/index.html) is served for every non-/data/ path.
   "assets": {
     "directory": "./public",
@@ -21,7 +24,7 @@
   "kv_namespaces": [
     {
       "binding": "WG_STATE",
-      "id": "PASTE_KV_NAMESPACE_ID_HERE"
+      "id": "0c4ada8d61a74499b4430416c09c8c2b"
     }
   ],
 
