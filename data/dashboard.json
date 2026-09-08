@@ -1,5 +1,5 @@
 {
-  "last_updated": 1788825680,
+  "last_updated": 1788839994,
   "total_games": 6,
   "games": [
     {
@@ -28,9 +28,9 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 6,
-          "count_fortifies": 2,
-          "turn_counter": 18,
+          "count_attacks": 8,
+          "count_fortifies": 3,
+          "turn_counter": 19,
           "autoboot_next_turn": 0,
           "name": "fitzyfbaby",
           "condition_value": "?"
@@ -81,9 +81,9 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 3,
-          "count_fortifies": 3,
-          "turn_counter": 18,
+          "count_attacks": 2,
+          "count_fortifies": 0,
+          "turn_counter": 19,
           "autoboot_next_turn": 0,
           "name": "Bofa Deez",
           "condition_value": "?"
@@ -107,9 +107,9 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 1,
+          "count_attacks": 3,
           "count_fortifies": 0,
-          "turn_counter": 18,
+          "turn_counter": 19,
           "autoboot_next_turn": 0,
           "name": "Invader Zim",
           "condition_value": "?"
@@ -160,8 +160,8 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 11,
-          "count_fortifies": 2,
+          "count_attacks": 0,
+          "count_fortifies": 0,
           "turn_counter": 18,
           "autoboot_next_turn": 0,
           "name": "harambae",
@@ -188,7 +188,7 @@
           "condition_hidden": "?",
           "count_attacks": 0,
           "count_fortifies": 0,
-          "turn_counter": 17,
+          "turn_counter": 18,
           "autoboot_next_turn": 0,
           "name": "jgliks",
           "condition_value": "?"
@@ -239,9 +239,9 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 1,
-          "count_fortifies": 1,
-          "turn_counter": 17,
+          "count_attacks": 4,
+          "count_fortifies": 0,
+          "turn_counter": 18,
           "autoboot_next_turn": 0,
           "name": "nico12",
           "condition_value": "?"
@@ -249,11 +249,11 @@
       },
       "eliminated": "a:3:{i:0;s:32:\"59be240211f1834f6d990356f257c7aa\";i:1;s:32:\"0a711ea50d3e18fef6b33484ffb57f86\";i:2;s:32:\"5e726124b708b92631a9932e51deb772\";}",
       "current_turn": [
-        "jgliks"
+        "harambae"
       ],
       "flags": "0",
       "gamestatus": "Live",
-      "turnstamp": "1788821553",
+      "turnstamp": "1788835311",
       "createstamp": "1786640274",
       "startstamp": "1786752714",
       "endstamp": 0,
@@ -297,7 +297,7 @@
       "scenario_name": "Default with History",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 82276
+      "time_remaining": 81720
     },
     {
       "gameid": "81542603",
@@ -347,13 +347,13 @@
           "num_fortifies": "?",
           "phase": "?",
           "allowed_phases": "?",
-          "fromid": "72",
-          "toid": "70",
+          "fromid": "",
+          "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 1,
-          "count_fortifies": 0,
-          "turn_counter": 15,
+          "count_attacks": 3,
+          "count_fortifies": 1,
+          "turn_counter": 16,
           "autoboot_next_turn": 0,
           "name": "jgliks",
           "condition_value": "?"
@@ -404,9 +404,9 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 15,
-          "count_fortifies": 3,
-          "turn_counter": 15,
+          "count_attacks": 5,
+          "count_fortifies": 1,
+          "turn_counter": 16,
           "autoboot_next_turn": 0,
           "name": "doubledragon",
           "condition_value": "?"
@@ -430,8 +430,8 @@
           "toid": "",
           "condition_type": "?",
           "condition_hidden": "?",
-          "count_attacks": 12,
-          "count_fortifies": 2,
+          "count_attacks": 0,
+          "count_fortifies": 0,
           "turn_counter": 15,
           "autoboot_next_turn": 0,
           "name": "somethingpete",
@@ -492,11 +492,11 @@
       },
       "eliminated": "a:1:{i:0;s:32:\"da13b5f88a836715c6326f98629f503a\";}",
       "current_turn": [
-        "jgliks"
+        "somethingpete"
       ],
       "flags": "0",
       "gamestatus": "Live",
-      "turnstamp": "1788821125",
+      "turnstamp": "1788826501",
       "createstamp": "1787463907",
       "startstamp": "1787489794",
       "endstamp": 0,
@@ -537,7 +537,7 @@
       "scenario_name": "",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 81848
+      "time_remaining": 72910
     },
     {
       "gameid": "81542418",
@@ -834,7 +834,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 76697
+      "time_remaining": 62383
     },
     {
       "gameid": "81539522",
@@ -1258,7 +1258,7 @@
       "scenario_name": "Default",
       "image_extension": "png",
       "gameplay_type": "Turn Based",
-      "time_remaining": 76899
+      "time_remaining": 62575
     },
     {
       "gameid": "81542982",
