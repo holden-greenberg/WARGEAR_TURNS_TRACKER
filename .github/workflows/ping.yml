@@ -1,0 +1,20 @@
+# TEMPORARY fallback. The Worker's own Cloudflare cron trigger (every minute,
+# see wrangler.jsonc) is the real updater. This job just pokes the Worker's
+# /__resync endpoint on GitHub's schedule as a safety net while that cron
+# trigger is not yet firing on a freshly-created account.
+#
+# GitHub schedule crons are throttled and unreliable (realistically every
+# 5-20 min, not every 5). Once `curl .../data/dashboard.json` shows
+# last_updated advancing on its own, DELETE this file.
+name: Ping Worker resync
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS --retry 3 --retry-all-errors --max-time 30 https://wargear-turns-tracker.holdengreenberg.workers.dev/__resync
