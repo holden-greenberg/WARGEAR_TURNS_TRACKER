@@ -341,13 +341,19 @@ async function runSync(env) {
     cursors,
   };
 
-  if (stableState(next) === prevSerialized) {
+  const now = Math.floor(Date.now() / 1000);
+  const changed = stableState(next) !== prevSerialized;
+
+  // When nothing changed, still refresh the heartbeat every 5 minutes so the
+  // last successful poll stays visible (and provably live) without exhausting
+  // the KV free-tier write budget.
+  if (!changed && now - (prev.updated || 0) < 300) {
     return { changed: false, games: next.games.length };
   }
 
-  next.updated = Math.floor(Date.now() / 1000);
+  next.updated = now;
   await env.WG_STATE.put("state", JSON.stringify(next));
-  return { changed: true, games: next.games.length };
+  return { changed, games: next.games.length };
 }
 
 // Serialize the parts of state we diff on (everything except the `updated`
