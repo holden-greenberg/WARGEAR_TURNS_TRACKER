@@ -346,12 +346,23 @@ async function runSync(env) {
 
   const now = Math.floor(Date.now() / 1000);
   const changed = stableState(next) !== prevSerialized;
+  const sinceWrite = now - (prev.updated || 0);
 
   // When nothing changed, still refresh the heartbeat every 5 minutes so the
   // last successful poll stays visible (and provably live) without exhausting
   // the KV free-tier write budget.
-  if (!changed && now - (prev.updated || 0) < 300) {
+  if (!changed && sinceWrite < 300) {
     return { changed: false, games: next.games.length };
+  }
+
+  // Even when something changed, never write more than once every 2 minutes.
+  // The cron runs every 60s, so with no cap a busy day (constant turn
+  // handoffs) could write up to 1,440 times - well past the KV free tier's
+  // 1,000 writes/day. Turn timing itself comes from WarGear's own
+  // `turnstamp`, not our poll cadence, so throttling writes loses no
+  // accuracy: the skipped run's diff just gets folded into the next write.
+  if (changed && sinceWrite < 120) {
+    return { changed, games: next.games.length, throttled: true };
   }
 
   next.updated = now;
