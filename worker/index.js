@@ -1,7 +1,7 @@
 /**
  * WarGear Turns Tracker - single Cloudflare Worker.
  *
- * On a 1-minute cron it polls the WarGear "my games" API for every configured
+ * On a 5-minute cron it polls the WarGear "my games" API for every configured
  * player, rebuilds the dashboard + turn-speed stats, and stashes everything in
  * one KV key. The fetch handler serves the static site (public/) plus
  * /data/dashboard.json and /data/turn_stats.json straight from that KV key.
@@ -348,17 +348,16 @@ async function runSync(env) {
   const changed = stableState(next) !== prevSerialized;
   const sinceWrite = now - (prev.updated || 0);
 
-  // When nothing changed, still refresh the heartbeat every 5 minutes so the
+  // When nothing changed, still refresh the heartbeat every cron tick (~5 min) so the
   // last successful poll stays visible (and provably live) without exhausting
   // the KV free-tier write budget.
-  if (!changed && sinceWrite < 300) {
+  if (!changed && sinceWrite < 240) {
     return { changed: false, games: next.games.length };
   }
 
   // Even when something changed, never write more than once every 2 minutes.
-  // The cron runs every 60s, so with no cap a busy day (constant turn
-  // handoffs) could write up to 1,440 times - well past the KV free tier's
-  // 1,000 writes/day. Turn timing itself comes from WarGear's own
+  // With a 5-minute cron this is a safety net at most 288 writes/day,
+  // far under the KV free tier's 1,000. Turn timing itself comes from WarGear's own
   // `turnstamp`, not our poll cadence, so throttling writes loses no
   // accuracy: the skipped run's diff just gets folded into the next write.
   if (changed && sinceWrite < 120) {
@@ -388,8 +387,8 @@ function jsonResponse(payload) {
   return new Response(JSON.stringify(payload), {
     headers: {
       "Content-Type": "application/json",
-      // Let the edge serve repeat visitors for 30s; the cron runs every 60s.
-      "Cache-Control": "public, max-age=15, s-maxage=30",
+      // Let the edge serve repeat visitors for 2 min; the cron runs every 5 min.
+      "Cache-Control": "public, max-age=60, s-maxage=120",
     },
   });
 }

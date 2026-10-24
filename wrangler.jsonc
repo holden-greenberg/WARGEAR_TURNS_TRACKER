@@ -13,9 +13,9 @@
     "binding": "ASSETS"
   },
 
-  // Poll WarGear once a minute.
+  // Poll WarGear every 5 minutes (keeps CPU use under the free-tier limit).
   "triggers": {
-    "crons": ["* * * * *"]
+    "crons": ["*/5 * * * *"]
   },
 
   // All persistent state lives in one key ("state") in this namespace.
