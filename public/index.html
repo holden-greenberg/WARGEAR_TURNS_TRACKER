@@ -40,10 +40,13 @@
         h1 { font-size: 1.4rem; margin: 0; font-weight: 800; letter-spacing: 0.2px; display: flex; align-items: center; gap: 10px; }
         .badge-live { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--good); background: #3ddc8420; border: 1px solid #3ddc8450; padding: 3px 8px; border-radius: 20px; }
         .last-updated { color: var(--text-faint); font-size: 0.78rem; }
+        .last-updated.stale { color: var(--bad); }
 
         h2 { margin: 0 0 14px; color: var(--text); font-size: 1.05rem; font-weight: 700; letter-spacing: 0.2px; }
         .section-head { display: flex; align-items: center; gap: 8px; margin: 34px 0 14px; }
         .section-head h2 { margin: 0; }
+        .section-updated { margin-left: auto; color: var(--text-faint); font-size: 0.74rem; font-weight: 500; white-space: nowrap; }
+        .header-panel .section-updated { margin-left: auto; }
         .section-head .count-pill { background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); font-size: 0.72rem; font-weight: 600; padding: 2px 9px; border-radius: 20px; }
 
         /* Header Panel */
@@ -154,11 +157,11 @@
     </div>
 
     <div class="header-panel" style="margin-bottom:8px;">
-        <h2>🚨 On The Clock</h2>
+        <h2>🚨 On The Clock <span class="section-updated" id="upd-clock"></span></h2>
         <div id="active-turns-list">Loading...</div>
     </div>
 
-    <div class="section-head"><h2>📊 Player Stats <span style="color:var(--text-faint); font-weight:500;">— Tracker Era</span></h2></div>
+    <div class="section-head"><h2>📊 Player Stats <span style="color:var(--text-faint); font-weight:500;">— Tracker Era</span></h2><span class="section-updated" id="upd-stats"></span></div>
     <div class="card stats-wrap" style="margin-bottom:8px; padding:0;">
         <table class="stats-table" id="stats-table">
             <thead>
@@ -178,10 +181,10 @@
     </div>
     <div id="skill-tip" role="tooltip" hidden><strong>Skill Rating</strong> estimates how strong each player is, from every finished Tracker Era game. What counts is where you finish: winning is best, and if you don't win, lasting more turns than the other losers still helps. Beating a higher-rated opponent is worth more than beating a weaker one. New players start low and climb as the rating grows more confident in them. The &#9650;&#9660; shows how much your most recent game moved it.</div>
 
-    <div class="section-head"><h2>Live Games</h2></div>
+    <div class="section-head"><h2>Live Games</h2><span class="section-updated" id="upd-live"></span></div>
     <div class="grid" id="live-grid"></div>
 
-    <div class="section-head"><h2>Archive</h2></div>
+    <div class="section-head"><h2>Archive</h2><span class="section-updated" id="upd-archive"></span></div>
     <div style="display:flex; flex-direction:column; gap:10px;" id="archive-grid"></div>
 
     <script>
@@ -214,6 +217,46 @@
         // Formats a unix timestamp (seconds) as a short local date, e.g. "Sep 3, 2026".
         function formatDate(seconds) {
             return new Date(seconds * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+        }
+
+        // "just now" / "3m ago" / "2h ago" / "4d ago" from a unix timestamp (seconds).
+        function relTime(seconds) {
+            if (!seconds) return '—';
+            const diff = Math.max(0, Math.floor(Date.now() / 1000 - seconds));
+            if (diff < 45) return 'just now';
+            if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+            if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+            return `${Math.round(diff / 86400)}d ago`;
+        }
+
+        // --- Per-section freshness -------------------------------------------
+        // Each section header shows when THAT section's data last actually
+        // changed (server-stamped, section-accurate). The top-right shows when
+        // this page last successfully fetched, and warns if the server-side
+        // poller itself looks stuck (last_poll gone quiet).
+        let sectionUpdated = {}; // { clock, live, finished, turnstats } unix secs
+        let lastPollAt = 0;      // server: last successful poll (any outcome)
+        let lastFetchOkAt = 0;   // client: last successful data fetch (ms)
+
+        function renderFreshness() {
+            const set = (id, ts) => { const el = document.getElementById(id); if (el) el.textContent = ts ? 'Updated ' + relTime(ts) : ''; };
+            set('upd-clock', sectionUpdated.clock);
+            set('upd-live', sectionUpdated.live);
+            set('upd-archive', sectionUpdated.finished);
+            // Player Stats is fed by finished games and turn-time stats — show whichever moved last.
+            set('upd-stats', Math.max(sectionUpdated.finished || 0, sectionUpdated.turnstats || 0));
+
+            const top = document.getElementById('last-updated');
+            if (!top) return;
+            const pollAgeMin = lastPollAt ? (Date.now() / 1000 - lastPollAt) / 60 : Infinity;
+            if (pollAgeMin > 20) {
+                top.classList.add('stale');
+                top.textContent = `⚠ tracker last polled ${relTime(lastPollAt)}`;
+            } else {
+                top.classList.remove('stale');
+                const ago = lastFetchOkAt ? relTime(Math.floor(lastFetchOkAt / 1000)) : '—';
+                top.textContent = `Checked ${ago} · refreshes every 30s`;
+            }
         }
 
         // --- Player avatar colors, derived from each player's most-used WarGear color_code ---
@@ -359,12 +402,68 @@
             return `<span class="${wrapCls}">${fallback}<img src="${firstUrl}" data-avatar-id="${id}" data-ext-idx="0" alt="" loading="lazy" title="${name}" onerror="handleAvatarError(this)"></span>`;
         }
 
-        // Visual countdown bar for "On The Clock" — green when fresh, red as the turn expires.
-        function timeBarHtml(secondsLeft, totalSeconds) {
-            if (secondsLeft === null || secondsLeft === undefined || !totalSeconds) return '';
-            const frac = Math.max(0, Math.min(1, secondsLeft / totalSeconds));
-            const hue = frac * 100; // 0 = red, 100 = green
-            return `<div class="time-bar"><div class="time-bar-fill" style="width:${(frac * 100).toFixed(1)}%; background:hsl(${hue},70%,50%);"></div></div>`;
+        // --- On The Clock: live local countdown -------------------------------
+        // loadDashboard() refreshes the data every 60s; between refreshes a 1s
+        // timer recomputes each row's remaining time from turnstamp + boot_time
+        // so the numbers and bars move in real time. The row structure is drawn
+        // once per data refresh (renderClockShell) and only the time bits are
+        // touched each tick (tickClock), so avatars never re-fetch or flicker.
+        let clockData = {}; // name -> [{ gameName, turnstamp, bootTime, timeRemaining }]
+
+        function clockSecondsLeft(row, nowS) {
+            const ts = parseFloat(row.dataset.turnstamp);
+            const boot = parseFloat(row.dataset.boot);
+            const rem = parseFloat(row.dataset.remaining);
+            if (Number.isFinite(ts) && Number.isFinite(boot)) return { secondsLeft: boot - (nowS - ts), boot };
+            if (Number.isFinite(rem)) return { secondsLeft: rem, boot: Number.isFinite(boot) ? boot : null };
+            return { secondsLeft: null, boot: null };
+        }
+
+        function tickClock() {
+            const nowS = Date.now() / 1000;
+            document.querySelectorAll('#active-turns-list .clock-game-row').forEach(row => {
+                const { secondsLeft, boot } = clockSecondsLeft(row, nowS);
+                const overdue = secondsLeft !== null && secondsLeft <= 0;
+                row.classList.toggle('overdue', overdue);
+                const tt = row.querySelector('.time-text');
+                if (tt) tt.textContent = secondsLeft === null ? '' : formatTimeLeft(secondsLeft);
+                const bar = row.querySelector('.time-bar');
+                const fill = row.querySelector('.time-bar-fill');
+                if (bar && fill) {
+                    if (secondsLeft === null || !boot) {
+                        bar.style.display = 'none';
+                    } else {
+                        bar.style.display = '';
+                        const frac = Math.max(0, Math.min(1, secondsLeft / boot));
+                        fill.style.width = (frac * 100).toFixed(1) + '%';
+                        fill.style.background = `hsl(${frac * 100},70%,50%)`;
+                    }
+                }
+            });
+        }
+
+        function renderClockShell() {
+            const el = document.getElementById('active-turns-list');
+            if (!el) return;
+            const entries = Object.entries(clockData).sort((a, b) => b[1].length - a[1].length);
+            el.innerHTML = entries.length ? entries.map(([name, games]) => {
+                const gamesHtml = games.map(g => `
+                    <div class="clock-game-row" data-turnstamp="${g.turnstamp ?? ''}" data-boot="${g.bootTime ?? ''}" data-remaining="${g.timeRemaining ?? ''}">
+                        <div class="clock-game-meta"><span class="game-name">${g.gameName}</span><span class="time-text"></span></div>
+                        <div class="time-bar"><div class="time-bar-fill"></div></div>
+                    </div>`).join('');
+                return `<div class="clock-card">
+                    <div class="clock-card-left">
+                        ${avatarHtml(name, 'lg')}
+                        <div class="clock-card-body">
+                            <div class="clock-card-name">${name}</div>
+                            <div class="clock-games">${gamesHtml}</div>
+                        </div>
+                    </div>
+                    <span class="tag">${games.length}</span>
+                </div>`;
+            }).join('') : '<p class="empty-msg" style="margin:0;">All quiet. No active turns.</p>';
+            tickClock();
         }
 
         let statsRows = [];
@@ -558,6 +657,10 @@
                 const allGames = dashboard.games || [];
                 const turnStats = turnStatsRes.ok ? (await turnStatsRes.json()).players || {} : {};
 
+                sectionUpdated = dashboard.section_updated || {};
+                lastPollAt = dashboard.last_poll || 0;
+                lastFetchOkAt = Date.now();
+
                 playerColorHex = tallyPlayerColors(allGames);
 
                 let activeTurnsGames = {};
@@ -587,23 +690,24 @@
                         ? game.current_turn.filter(p => p !== null).map(p => typeof p === 'object' ? p.name : p)
                         : [];
 
-                    // Tally Active Turns (Only for live games)
+                    // Tally Active Turns (Only for live games). Store the raw
+                    // inputs; the 1s tickClock() derives the live countdown from
+                    // turnstamp + boot_time, falling back to the API's
+                    // time_remaining snapshot when either field is missing.
                     if (!isFinished) {
-                        // Prefer a live countdown from turnstamp + boot_time; fall back to the
-                        // API's last-fetched time_remaining snapshot if either field is missing.
-                        let secondsLeft = null;
                         const bootTime = Number(game.boot_time);
                         const turnstamp = Number(game.turnstamp);
-                        const totalSeconds = Number.isFinite(bootTime) && bootTime > 0 ? bootTime : null;
-                        if (Number.isFinite(bootTime) && Number.isFinite(turnstamp) && turnstamp > 0) {
-                            secondsLeft = bootTime - (nowSeconds - turnstamp);
-                        } else if (game.time_remaining !== undefined && game.time_remaining !== null && Number.isFinite(Number(game.time_remaining))) {
-                            secondsLeft = Number(game.time_remaining);
-                        }
+                        const timeRemaining = (game.time_remaining !== undefined && game.time_remaining !== null && Number.isFinite(Number(game.time_remaining)))
+                            ? Number(game.time_remaining) : null;
 
                         activeTurnNames.forEach(name => {
                             if (!activeTurnsGames[name]) activeTurnsGames[name] = [];
-                            activeTurnsGames[name].push({ gameName: game.name, secondsLeft, totalSeconds });
+                            activeTurnsGames[name].push({
+                                gameName: game.name,
+                                turnstamp: Number.isFinite(turnstamp) && turnstamp > 0 ? turnstamp : null,
+                                bootTime: Number.isFinite(bootTime) && bootTime > 0 ? bootTime : null,
+                                timeRemaining,
+                            });
                         });
                     }
 
@@ -709,30 +813,10 @@
                 document.getElementById('live-grid').innerHTML = liveHtml || '<p class="empty-msg">No live games currently active.</p>';
                 document.getElementById('archive-grid').innerHTML = archiveHtml || '<p class="empty-msg">No Tracker Era games have finished yet. Play on!</p>';
 
-                // Render Top Panels
-                const clockEntries = Object.entries(activeTurnsGames).sort((a, b) => b[1].length - a[1].length);
-                document.getElementById('active-turns-list').innerHTML = clockEntries.length ?
-                    clockEntries.map(([name, games]) => {
-                        const gamesHtml = games.map(g => {
-                            const overdue = g.secondsLeft !== null && g.secondsLeft <= 0;
-                            const timeText = g.secondsLeft === null ? '' : formatTimeLeft(g.secondsLeft);
-                            const bar = timeBarHtml(g.secondsLeft, g.totalSeconds);
-                            return `<div class="clock-game-row${overdue ? ' overdue' : ''}">
-                                <div class="clock-game-meta"><span class="game-name">${g.gameName}</span><span class="time-text">${timeText}</span></div>
-                                ${bar}
-                            </div>`;
-                        }).join('');
-                        return `<div class="clock-card">
-                            <div class="clock-card-left">
-                                ${avatarHtml(name, 'lg')}
-                                <div class="clock-card-body">
-                                    <div class="clock-card-name">${name}</div>
-                                    <div class="clock-games">${gamesHtml}</div>
-                                </div>
-                            </div>
-                            <span class="tag">${games.length}</span>
-                        </div>`;
-                    }).join('') : '<p class="empty-msg" style="margin:0;">All quiet. No active turns.</p>';
+                // Render Top Panels. The clock structure is drawn here; tickClock()
+                // keeps its numbers and bars live on a 1s timer between refreshes.
+                clockData = activeTurnsGames;
+                renderClockShell();
 
                 // Build the combined per-player stats table
                 const { ratings: skillRatings, lastDelta: skillDelta } =
@@ -771,9 +855,7 @@
                 });
 
                 renderStatsTable();
-
-                const stamp = dashboard.last_updated ? new Date(dashboard.last_updated * 1000) : new Date();
-                document.getElementById('last-updated').textContent = 'Updated ' + stamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                renderFreshness();
 
             } catch (err) {
                 console.error("Error details:", err);
@@ -782,7 +864,9 @@
         }
 
         loadDashboard();
-        setInterval(loadDashboard, 60000);
+        setInterval(loadDashboard, 30000);
+        setInterval(tickClock, 1000);
+        setInterval(renderFreshness, 15000);
     </script>
 </body>
 </html>

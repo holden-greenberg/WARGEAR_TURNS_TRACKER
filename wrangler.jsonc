@@ -13,7 +13,8 @@
     "binding": "ASSETS"
   },
 
-  // Poll WarGear once a minute.
+  // Poll WarGear once a minute. Most minutes run a cheap live-only pass; a full
+  // pass (Finished-history scan + turn/skill stats) runs every 5th minute.
   "triggers": {
     "crons": ["* * * * *"]
   },

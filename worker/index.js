@@ -264,7 +264,12 @@ function setsEqual(a, b) {
 
 // --- the sync -----------------------------------------------------------
 
-const EMPTY_STATE = { games: [], turn_stats: {}, pending: {}, finalized: [], cursors: {} };
+const EMPTY_STATE = { games: [], turn_stats: {}, pending: {}, finalized: [], cursors: {}, sections: {} };
+
+// How stale `last_poll` may get before we spend one write refreshing it. Section
+// "Updated" times only move on a real change, so this pulse is the one thing
+// that lets the frontend tell a quiet game apart from a dead poller.
+const PULSE_SECONDS = 600;
 
 function parseJsonEnv(value, fallback) {
   try {
@@ -275,7 +280,10 @@ function parseJsonEnv(value, fallback) {
   }
 }
 
-async function runSync(env) {
+// `liveOnly` (every minute): re-fetch only the live games so an "on the clock"
+// handoff is visible within ~60s, and skip the expensive Finished-history scan.
+// The full pass (every 5 min) does the scan plus turn/skill stat rollups.
+async function runSync(env, { liveOnly = false } = {}) {
   const players = parseJsonEnv(env.PLAYERS_CONFIG, []);
   const coreSet = new Set(
     (env.CORE_PLAYERS || "")
@@ -299,17 +307,24 @@ async function runSync(env) {
   const budget = newBudget();
   const allGames = {};
 
+  // Live-only pass: keep every game we already know about, then let the fresh
+  // live fetch below overwrite its own entries. A game that just left the live
+  // list stays on its last snapshot until the next full pass reconciles it.
+  if (liveOnly) {
+    for (const g of prev.games) allGames[String(g.gameid)] = g;
+  }
+
   for (let i = 0; i < players.length; i += 1) {
     const apiKey = players[i]?.api_key;
     if (!apiKey) continue;
 
     const live = await fetchLiveGames(apiKey, budget);
-    const { games: finishedGames, lastPage } = await fetchFinishedSinceEra(
-      apiKey,
-      cursors[i],
-      budget
-    );
-    cursors[i] = lastPage;
+    let finishedGames = [];
+    if (!liveOnly) {
+      const r = await fetchFinishedSinceEra(apiKey, cursors[i], budget);
+      finishedGames = r.games;
+      cursors[i] = r.lastPage;
+    }
 
     for (const rawGame of [...live, ...finishedGames]) {
       let game =
@@ -345,30 +360,86 @@ async function runSync(env) {
   };
 
   const now = Math.floor(Date.now() / 1000);
-  const changed = stableState(next) !== prevSerialized;
+  const mode = liveOnly ? "live" : "full";
 
-  // When nothing changed, still refresh the heartbeat every 5 minutes so the
-  // last successful poll stays visible (and provably live) without exhausting
-  // the KV free-tier write budget.
-  if (!changed && now - (prev.updated || 0) < 300) {
-    return { changed: false, games: next.games.length };
+  // Stamp each section whose rendered content actually changed this poll, so
+  // every "Updated" label on the site reflects that section's own last change.
+  const prevSections = prev.sections || {};
+  const newSigs = sectionSignatures(next);
+  next.sections = {};
+  for (const key of Object.keys(newSigs)) {
+    const p = prevSections[key];
+    next.sections[key] = p && p.sig === newSigs[key] ? p : { sig: newSigs[key], at: now };
+  }
+  const changedSections = Object.keys(next.sections).filter((k) => next.sections[k].at === now);
+
+  // A live (every-minute) pass persists only when the clock moved - a handoff or
+  // a game entering/leaving the live set. Any other section change waits for the
+  // next full pass (<=5 min). A full pass persists any real data change. Either
+  // pass also writes if the liveness pulse has gone stale.
+  const clockMoved = next.sections.clock.at === now;
+  const fullChanged = stableState(next) !== prevSerialized;
+  const shouldWrite = liveOnly ? clockMoved : fullChanged;
+  const pulseStale = now - (prev.last_poll || 0) >= PULSE_SECONDS;
+
+  if (!shouldWrite && !pulseStale) {
+    return { changed: false, mode, games: next.games.length };
   }
 
-  next.updated = now;
+  next.updated = now; // retained for older clients; sections carry the real times
+  next.last_poll = now;
   await env.WG_STATE.put("state", JSON.stringify(next));
-  return { changed, games: next.games.length };
+  return { changed: shouldWrite, mode, sections: changedSections, games: next.games.length };
+}
+
+// Fields on a live game that move on their own every poll (the boot-timer
+// countdown). They are still stored and served - the frontend also derives the
+// countdown from turnstamp + boot_time - but excluding them from the diff means
+// a steady-state minute with no real change writes nothing.
+const VOLATILE_GAME_FIELDS = ["time_remaining", "time_remaining_words", "boot_words"];
+
+function gameForDiff(g) {
+  const c = { ...g };
+  for (const f of VOLATILE_GAME_FIELDS) delete c[f];
+  return c;
 }
 
 // Serialize the parts of state we diff on (everything except the `updated`
-// timestamp) so an unchanged poll writes nothing.
+// timestamp and per-poll volatile fields) so an unchanged poll writes nothing.
+// Games are sorted by id so a reordered fetch is not mistaken for a change.
 function stableState(s) {
   return JSON.stringify({
-    games: s.games || [],
+    games: (s.games || [])
+      .map(gameForDiff)
+      .sort((a, b) => String(a.gameid).localeCompare(String(b.gameid))),
     turn_stats: s.turn_stats || {},
     pending: s.pending || {},
     finalized: (s.finalized || []).slice().sort(),
     cursors: s.cursors || {},
   });
+}
+
+// A signature per site section: a stable string of exactly the data that
+// section renders. When it changes between polls we restamp that section's
+// `changed_at`. Keys map to the site's headers:
+//   clock     - On The Clock (who is up, in which live game, since when)
+//   live      - Live Games grid (full live rosters / status / timeline)
+//   finished  - Archive, and the bulk of Player Stats
+//   turnstats - the "Avg Turn Time" column
+function sectionSignatures(s) {
+  const games = (s.games || [])
+    .slice()
+    .sort((a, b) => String(a.gameid).localeCompare(String(b.gameid)));
+  const live = games.filter((g) => g.gamestatus !== "Finished");
+  const finished = games.filter((g) => g.gamestatus === "Finished");
+  return {
+    clock: JSON.stringify(
+      live.map((g) => [g.gameid, [...normalizeTurnNames(g.current_turn)].sort(), g.turnstamp])
+    ),
+    live: JSON.stringify(live.map(gameForDiff)),
+    finished: JSON.stringify(finished.map(gameForDiff)),
+    turnstats: JSON.stringify(s.turn_stats || {}),
+  };
 }
 
 // --- HTTP -------------------------------------------------------------
@@ -377,26 +448,39 @@ function jsonResponse(payload) {
   return new Response(JSON.stringify(payload), {
     headers: {
       "Content-Type": "application/json",
-      // Let the edge serve repeat visitors for 30s; the cron runs every 60s.
-      "Cache-Control": "public, max-age=15, s-maxage=30",
+      // Short edge cache; the live pass runs every 60s and clients poll ~30s.
+      "Cache-Control": "public, max-age=10, s-maxage=15",
     },
   });
 }
 
 async function handleDataRoute(pathname, env) {
   const state = (await env.WG_STATE.get("state", "json")) || { ...EMPTY_STATE, updated: 0 };
-  const lastUpdated = state.updated || 0;
+  const sections = state.sections || {};
+  const at = (k) => (sections[k] && sections[k].at) || state.updated || 0;
+  // Per-section change times, plus a liveness pulse the frontend uses to warn
+  // when the poller itself looks stuck.
+  const meta = {
+    last_updated: state.updated || 0,
+    last_poll: state.last_poll || state.updated || 0,
+    section_updated: {
+      clock: at("clock"),
+      live: at("live"),
+      finished: at("finished"),
+      turnstats: at("turnstats"),
+    },
+  };
 
   if (pathname === "/data/dashboard.json") {
     return jsonResponse({
-      last_updated: lastUpdated,
+      ...meta,
       total_games: (state.games || []).length,
       games: state.games || [],
     });
   }
   if (pathname === "/data/turn_stats.json") {
     return jsonResponse({
-      last_updated: lastUpdated,
+      ...meta,
       players: state.turn_stats || {},
       pending: state.pending || {},
       finalized_games: state.finalized || [],
@@ -415,10 +499,10 @@ export default {
       return new Response("Not found", { status: 404 });
     }
 
-    // Manual trigger for debugging: /__resync (no auth - it only re-polls a
-    // public game list and writes to our own KV).
+    // Manual trigger for debugging: /__resync runs a full pass (no auth - it
+    // only re-polls a public game list and writes to our own KV).
     if (url.pathname === "/__resync") {
-      const result = await runSync(env);
+      const result = await runSync(env, { liveOnly: false });
       return jsonResponse(result);
     }
 
@@ -426,10 +510,15 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    // One cron ("* * * * *"). The full pass (Finished-history scan + turn/skill
+    // stats) runs every 5th minute; every other minute is a cheap live-only
+    // pass so an "on the clock" handoff is visible within ~60s.
+    const minute = new Date(event.scheduledTime).getUTCMinutes();
+    const liveOnly = minute % 5 !== 0;
     ctx.waitUntil(
-      runSync(env).then(
+      runSync(env, { liveOnly }).then(
         (r) => console.log(`sync ok: ${JSON.stringify(r)}`),
-        (e) => console.log(`sync failed: ${e && e.stack ? e.stack : e}`)
+        (e) => console.log(`sync failed (${liveOnly ? "live" : "full"}): ${e && e.stack ? e.stack : e}`)
       )
     );
   },
