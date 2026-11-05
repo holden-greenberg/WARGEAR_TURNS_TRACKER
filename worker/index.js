@@ -325,6 +325,14 @@ async function runSync(env) {
       if (game.gamestatus === "Finished" && game.endstamp < TRACKER_ERA_START) continue;
       if (countCorePlayers(game, coreSet) < minCore) continue;
 
+      // The same game comes back once per tracked player in it, and WarGear can
+      // keep a just-ended game in one player's "Live" list after it is already
+      // in another's "Finished" list. Last write used to win, so whichever
+      // player was polled last decided the status. A Finished copy now always
+      // beats a live one.
+      const seen = allGames[gameId];
+      if (seen && seen.gamestatus === "Finished" && game.gamestatus !== "Finished") continue;
+
       const oldGame = previousById[gameId];
       if (oldGame) recordTurnHandoff(gameId, oldGame, game, pending);
       finalizeTurnStatsIfFinished(gameId, game, turnStats, pending, finalized);
@@ -334,14 +342,14 @@ async function runSync(env) {
   }
 
   // A finished game never changes, so once seen it stays in state even if this
-  // run didn't fetch it (API error, page budget). Ratings and stats would
+  // run didn't fetch it (API error, page budget) or only saw a stale live copy. Ratings and stats would
   // otherwise swing whenever a poll came back partial. The era and core-player
   // checks still apply, so a CORE_PLAYERS edit takes effect on archived games.
   for (const g of prev.games) {
     const gameId = String(g.gameid);
     if (
       g.gamestatus === "Finished" &&
-      !allGames[gameId] &&
+      allGames[gameId]?.gamestatus !== "Finished" &&
       g.endstamp >= TRACKER_ERA_START &&
       countCorePlayers(g, coreSet) >= minCore
     ) {
