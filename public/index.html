@@ -740,9 +740,12 @@
                 eraFinishedGames.forEach(g => byId.set(String(g.gameid), g));
                 const games = [...byId.values()];
                 const pre = games.length - eraFinishedGames.length;
-                note.textContent = `${games.length} finished games (${pre} before the Tracker Era). Avg turn time is only measured for games the tracker watched live.`
+                note.textContent = `${games.length} finished games (${pre} before the Tracker Era), Tracker Era players only. Avg turn time is only measured for games the tracker watched live.`
                     + (history.complete ? '' : ' Historical backfill still running, so more games will appear.');
-                statsRows = computePlayerStats(games, {});
+                // Same roster as Tracker Era: history only deepens the sample
+                // for the group, it doesn't add everyone they ever played.
+                const eraNames = new Set(computePlayerStats(eraFinishedGames, eraTurnStats).map(r => r.name));
+                statsRows = computePlayerStats(games, {}).filter(r => eraNames.has(r.name));
             } else {
                 note.textContent = '';
                 statsRows = computePlayerStats(eraFinishedGames, eraTurnStats);
