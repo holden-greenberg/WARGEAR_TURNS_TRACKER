@@ -333,6 +333,22 @@ async function runSync(env) {
     }
   }
 
+  // A finished game never changes, so once seen it stays in state even if this
+  // run didn't fetch it (API error, page budget). Ratings and stats would
+  // otherwise swing whenever a poll came back partial. The era and core-player
+  // checks still apply, so a CORE_PLAYERS edit takes effect on archived games.
+  for (const g of prev.games) {
+    const gameId = String(g.gameid);
+    if (
+      g.gamestatus === "Finished" &&
+      !allGames[gameId] &&
+      g.endstamp >= TRACKER_ERA_START &&
+      countCorePlayers(g, coreSet) >= minCore
+    ) {
+      allGames[gameId] = g;
+    }
+  }
+
   const next = {
     games: Object.values(allGames),
     turn_stats: turnStats,

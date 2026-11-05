@@ -66,5 +66,8 @@ The site is then live at
   use a handful; the per-player "last finished page" cursor in `state.cursors`
   means only a cold start (empty KV) does the expensive history scan. If a cold
   start ever hits the cap it just resumes on the next tick.
+- **Finished games are permanent.** Once a finished game is in `state.games` it stays
+  there, even if a later poll fails to fetch it. Live games are still replaced on
+  every poll.
 - **Tracker Era.** Finished games before 2026-09-02 00:00 UTC are ignored
   (`TRACKER_ERA_START` in `worker/index.js`).
