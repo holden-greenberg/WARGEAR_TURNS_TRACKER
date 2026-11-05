@@ -2,7 +2,7 @@
 
 One Cloudflare Worker does everything:
 
-- **`scheduled()`** runs every minute (`triggers.crons` in `wrangler.jsonc`): polls the
+- **`scheduled()`** runs every 5 minutes (`triggers.crons` in `wrangler.jsonc`): polls the
   WarGear "my games" API for each configured player and rebuilds the dashboard and
   turn-speed stats.
 - **`fetch()`** serves the static site from `public/` and answers
@@ -60,7 +60,7 @@ The site is then live at
 ## Notes
 
 - **Cron cadence.** Cloudflare cron triggers fire on time, unlike GitHub Actions
-  schedules. One minute is the minimum interval.
+  schedules. Every 5 minutes keeps CPU use under the Workers Free limit (a 1-minute cron exceeded it 100+ times/day).
 - **Request budget.** A run is capped at `MAX_PAGE_FETCHES` (45) WarGear page
   fetches to stay under the Workers Free 50-subrequest limit. Steady-state runs
   use a handful; the per-player "last finished page" cursor in `state.cursors`

@@ -650,8 +650,8 @@
         async function loadDashboard() {
             try {
                 const [dashRes, turnStatsRes] = await Promise.all([
-                    fetch('data/dashboard.json?_=' + Date.now()),
-                    fetch('data/turn_stats.json?_=' + Date.now())
+                    fetch('data/dashboard.json'),
+                    fetch('data/turn_stats.json')
                 ]);
                 const dashboard = await dashRes.json();
                 const allGames = dashboard.games || [];
@@ -864,7 +864,11 @@
         }
 
         loadDashboard();
-        setInterval(loadDashboard, 30000);
+        // Poll every 5 min (matches the Worker cron) and skip while the tab is hidden.
+        setInterval(() => { if (!document.hidden) loadDashboard(); }, 300000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) loadDashboard(); });
+        // Local-only ticks: keep the clock countdown and "Updated Xm ago" labels
+        // live between refreshes without touching the server.
         setInterval(tickClock, 1000);
         setInterval(renderFreshness, 15000);
     </script>

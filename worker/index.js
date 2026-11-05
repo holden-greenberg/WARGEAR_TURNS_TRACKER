@@ -1,7 +1,7 @@
 /**
  * WarGear Turns Tracker - single Cloudflare Worker.
  *
- * On a 1-minute cron it polls the WarGear "my games" API for every configured
+ * On a 5-minute cron it polls the WarGear "my games" API for every configured
  * player, rebuilds the dashboard + turn-speed stats, and stashes everything in
  * one KV key. The fetch handler serves the static site (public/) plus
  * /data/dashboard.json and /data/turn_stats.json straight from that KV key.
@@ -266,11 +266,6 @@ function setsEqual(a, b) {
 
 const EMPTY_STATE = { games: [], turn_stats: {}, pending: {}, finalized: [], cursors: {}, sections: {} };
 
-// How stale `last_poll` may get before we spend one write refreshing it. Section
-// "Updated" times only move on a real change, so this pulse is the one thing
-// that lets the frontend tell a quiet game apart from a dead poller.
-const PULSE_SECONDS = 600;
-
 function parseJsonEnv(value, fallback) {
   try {
     const v = JSON.parse(value ?? "");
@@ -280,10 +275,7 @@ function parseJsonEnv(value, fallback) {
   }
 }
 
-// `liveOnly` (every minute): re-fetch only the live games so an "on the clock"
-// handoff is visible within ~60s, and skip the expensive Finished-history scan.
-// The full pass (every 5 min) does the scan plus turn/skill stat rollups.
-async function runSync(env, { liveOnly = false } = {}) {
+async function runSync(env) {
   const players = parseJsonEnv(env.PLAYERS_CONFIG, []);
   const coreSet = new Set(
     (env.CORE_PLAYERS || "")
@@ -307,24 +299,14 @@ async function runSync(env, { liveOnly = false } = {}) {
   const budget = newBudget();
   const allGames = {};
 
-  // Live-only pass: keep every game we already know about, then let the fresh
-  // live fetch below overwrite its own entries. A game that just left the live
-  // list stays on its last snapshot until the next full pass reconciles it.
-  if (liveOnly) {
-    for (const g of prev.games) allGames[String(g.gameid)] = g;
-  }
-
   for (let i = 0; i < players.length; i += 1) {
     const apiKey = players[i]?.api_key;
     if (!apiKey) continue;
 
     const live = await fetchLiveGames(apiKey, budget);
-    let finishedGames = [];
-    if (!liveOnly) {
-      const r = await fetchFinishedSinceEra(apiKey, cursors[i], budget);
-      finishedGames = r.games;
-      cursors[i] = r.lastPage;
-    }
+    const r = await fetchFinishedSinceEra(apiKey, cursors[i], budget);
+    const finishedGames = r.games;
+    cursors[i] = r.lastPage;
 
     for (const rawGame of [...live, ...finishedGames]) {
       let game =
@@ -360,10 +342,13 @@ async function runSync(env, { liveOnly = false } = {}) {
   };
 
   const now = Math.floor(Date.now() / 1000);
-  const mode = liveOnly ? "live" : "full";
+  const changed = stableState(next) !== prevSerialized;
+  const sinceWrite = now - (prev.updated || 0);
 
   // Stamp each section whose rendered content actually changed this poll, so
   // every "Updated" label on the site reflects that section's own last change.
+  // Computed up front (cheap, no write) so it's available even on a throttled
+  // run's eventual write, once the skipped diff folds into the next one.
   const prevSections = prev.sections || {};
   const newSigs = sectionSignatures(next);
   next.sections = {};
@@ -373,23 +358,26 @@ async function runSync(env, { liveOnly = false } = {}) {
   }
   const changedSections = Object.keys(next.sections).filter((k) => next.sections[k].at === now);
 
-  // A live (every-minute) pass persists only when the clock moved - a handoff or
-  // a game entering/leaving the live set. Any other section change waits for the
-  // next full pass (<=5 min). A full pass persists any real data change. Either
-  // pass also writes if the liveness pulse has gone stale.
-  const clockMoved = next.sections.clock.at === now;
-  const fullChanged = stableState(next) !== prevSerialized;
-  const shouldWrite = liveOnly ? clockMoved : fullChanged;
-  const pulseStale = now - (prev.last_poll || 0) >= PULSE_SECONDS;
-
-  if (!shouldWrite && !pulseStale) {
-    return { changed: false, mode, games: next.games.length };
+  // When nothing changed, still refresh the heartbeat every cron tick (~5 min) so the
+  // last successful poll stays visible (and provably live) without exhausting
+  // the KV free-tier write budget.
+  if (!changed && sinceWrite < 240) {
+    return { changed: false, games: next.games.length };
   }
 
-  next.updated = now; // retained for older clients; sections carry the real times
+  // Even when something changed, never write more than once every 2 minutes.
+  // With a 5-minute cron this is a safety net at most 288 writes/day,
+  // far under the KV free tier's 1,000. Turn timing itself comes from WarGear's own
+  // `turnstamp`, not our poll cadence, so throttling writes loses no
+  // accuracy: the skipped run's diff just gets folded into the next write.
+  if (changed && sinceWrite < 120) {
+    return { changed, games: next.games.length, throttled: true };
+  }
+
+  next.updated = now;
   next.last_poll = now;
   await env.WG_STATE.put("state", JSON.stringify(next));
-  return { changed: shouldWrite, mode, sections: changedSections, games: next.games.length };
+  return { changed, sections: changedSections, games: next.games.length };
 }
 
 // Fields on a live game that move on their own every poll (the boot-timer
@@ -448,8 +436,8 @@ function jsonResponse(payload) {
   return new Response(JSON.stringify(payload), {
     headers: {
       "Content-Type": "application/json",
-      // Short edge cache; the live pass runs every 60s and clients poll ~30s.
-      "Cache-Control": "public, max-age=10, s-maxage=15",
+      // Let the edge serve repeat visitors for 2 min; the cron runs every 5 min.
+      "Cache-Control": "public, max-age=60, s-maxage=120",
     },
   });
 }
@@ -499,10 +487,10 @@ export default {
       return new Response("Not found", { status: 404 });
     }
 
-    // Manual trigger for debugging: /__resync runs a full pass (no auth - it
-    // only re-polls a public game list and writes to our own KV).
+    // Manual trigger for debugging (no auth - it only re-polls a public game
+    // list and writes to our own KV).
     if (url.pathname === "/__resync") {
-      const result = await runSync(env, { liveOnly: false });
+      const result = await runSync(env);
       return jsonResponse(result);
     }
 
@@ -510,15 +498,10 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // One cron ("* * * * *"). The full pass (Finished-history scan + turn/skill
-    // stats) runs every 5th minute; every other minute is a cheap live-only
-    // pass so an "on the clock" handoff is visible within ~60s.
-    const minute = new Date(event.scheduledTime).getUTCMinutes();
-    const liveOnly = minute % 5 !== 0;
     ctx.waitUntil(
-      runSync(env, { liveOnly }).then(
+      runSync(env).then(
         (r) => console.log(`sync ok: ${JSON.stringify(r)}`),
-        (e) => console.log(`sync failed (${liveOnly ? "live" : "full"}): ${e && e.stack ? e.stack : e}`)
+        (e) => console.log(`sync failed: ${e && e.stack ? e.stack : e}`)
       )
     );
   },
