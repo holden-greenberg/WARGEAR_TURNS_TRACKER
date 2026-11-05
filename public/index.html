@@ -148,6 +148,14 @@
         .delta.down { color: #ff9ba6; }
 
         .empty-msg { color: var(--text-faint); padding: 6px 4px; }
+        /* Tracker Era / All time scope switch on the Player Stats header */
+        .scope-toggle { display: inline-flex; background: var(--panel-2); border: 1px solid var(--border); border-radius: 20px; padding: 2px; }
+        .scope-toggle button { background: none; border: 0; color: var(--text-dim); font: inherit; font-size: 0.74rem; font-weight: 600; padding: 4px 11px; border-radius: 16px; cursor: pointer; }
+        .scope-toggle button[aria-pressed="true"] { background: var(--accent-dim); color: var(--accent); }
+        .scope-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+        .scope-note { color: var(--text-faint); font-size: 0.74rem; margin: -6px 0 8px 2px; }
+        .scope-note:empty { display: none; }
+        @media (max-width: 560px) { .section-head.stats-head { flex-wrap: wrap; } }
     </style>
 </head>
 <body>
@@ -161,7 +169,15 @@
         <div id="active-turns-list">Loading...</div>
     </div>
 
-    <div class="section-head"><h2>📊 Player Stats <span style="color:var(--text-faint); font-weight:500;">— Tracker Era</span></h2><span class="section-updated" id="upd-stats"></span></div>
+    <div class="section-head stats-head">
+        <h2>📊 Player Stats</h2>
+        <div class="scope-toggle" role="group" aria-label="Stats period">
+            <button type="button" data-scope="era" aria-pressed="true">Tracker Era</button>
+            <button type="button" data-scope="all" aria-pressed="false">All time</button>
+        </div>
+        <span class="section-updated" id="upd-stats"></span>
+    </div>
+    <div class="scope-note" id="scope-note"></div>
     <div class="card stats-wrap" style="margin-bottom:8px; padding:0;">
         <table class="stats-table" id="stats-table">
             <thead>
@@ -179,7 +195,7 @@
             <tbody id="stats-tbody"><tr><td colspan="8">Loading...</td></tr></tbody>
         </table>
     </div>
-    <div id="skill-tip" role="tooltip" hidden><strong>Skill Rating</strong> scores every finished Tracker Era game. <strong>Winning</strong> counts most, and a win against more players is worth more. You also earn a smaller bonus for <strong>surviving</strong> longer than the table average and for <strong>eliminating</strong> more players than average. Your average is pulled toward 1000 until you have played enough games, and you need 5 games to be ranked. Opponent strength isn't counted. The &#9650;&#9660; shows how much your most recent game moved it.</div>
+    <div id="skill-tip" role="tooltip" hidden><strong>Skill Rating</strong> scores every finished game in the selected period (Tracker Era or All time). <strong>Winning</strong> counts most, and a win against more players is worth more. You also earn a smaller bonus for <strong>surviving</strong> longer than the table average and for <strong>eliminating</strong> more players than average. Your average is pulled toward 1000 until you have played enough games, and you need 5 games to be ranked. Opponent strength isn't counted. The &#9650;&#9660; shows how much your most recent game moved it.</div>
 
     <div class="section-head"><h2>Live Games</h2><span class="section-updated" id="upd-live"></span></div>
     <div class="grid" id="live-grid"></div>
@@ -619,6 +635,130 @@
             info.addEventListener('click', e => { e.stopPropagation(); });
         })();
 
+        // --- Stats scope: Tracker Era vs All time --------------------------
+        // "All time" adds pre-era finished games from /data/history.json (a
+        // one-off backfill of every tracked player's WarGear history, deduped
+        // by gameid). Turn times only exist for games the tracker watched
+        // live, so that column is blank in All time.
+        let eraFinishedGames = [];
+        let eraTurnStats = {};
+        let statsScope = 'era';
+        let history = null;          // { complete, games } once loaded
+        let historyLoading = null;   // in-flight promise
+        let historyError = false;
+
+        try { if (localStorage.getItem('statsScope') === 'all') statsScope = 'all'; } catch {}
+
+        function loadHistory(force) {
+            if (historyLoading) return historyLoading;
+            if (history && !force) return Promise.resolve(history);
+            historyLoading = fetch('data/history.json')
+                .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(h => { history = { complete: !!h.complete, games: Array.isArray(h.games) ? h.games : [] }; historyError = false; return history; })
+                .catch(err => { console.error('history load failed', err); historyError = true; return history; })
+                .finally(() => { historyLoading = null; });
+            return historyLoading;
+        }
+
+        function computePlayerStats(finishedGames, turnStats) {
+            const winCount = {}, gamesPlayedCount = {}, survivalTurns = {}, eliminationCount = {};
+            finishedGames.forEach(game => {
+                if (Array.isArray(game.winners)) {
+                    game.winners.filter(w => w !== null).forEach(w => {
+                        winCount[w] = (winCount[w] || 0) + 1;
+                    });
+                }
+                const players = game.players ? Object.values(game.players).filter(p => p && p.name) : [];
+                const seatToName = {};
+                players.forEach(p => { seatToName[p.seat] = p.name; });
+                players.forEach(p => {
+                    gamesPlayedCount[p.name] = (gamesPlayedCount[p.name] || 0) + 1;
+                    const isEliminated = ['Eliminated', 'Booted', 'Surrendered'].includes(p.status) || !!p.eliminated_by;
+                    if (isEliminated && typeof p.turn_counter === 'number') {
+                        (survivalTurns[p.name] ||= []).push(p.turn_counter);
+                    }
+                    if (p.eliminated_by && seatToName[p.eliminated_by] && seatToName[p.eliminated_by] !== p.name) {
+                        const killer = seatToName[p.eliminated_by];
+                        eliminationCount[killer] = (eliminationCount[killer] || 0) + 1;
+                    }
+                });
+            });
+
+            const { ratings: skillRatings, lastDelta: skillDelta } = computeSkillRatings(finishedGames);
+
+            const allNames = new Set([
+                ...Object.keys(winCount),
+                ...Object.keys(gamesPlayedCount),
+                ...Object.keys(survivalTurns),
+                ...Object.keys(eliminationCount),
+                ...Object.keys(turnStats),
+                ...Object.keys(skillRatings)
+            ]);
+
+            return Array.from(allNames).map(name => {
+                const wins = winCount[name] || 0;
+                const gamesPlayed = gamesPlayedCount[name] || 0;
+                const eliminations = eliminationCount[name] || 0;
+                const survivals = survivalTurns[name] || [];
+                const avgSurvival = survivals.length ? survivals.reduce((a, b) => a + b, 0) / survivals.length : null;
+                const ts = turnStats[name];
+                const avgTurnSeconds = ts && ts.turns ? ts.total_seconds / ts.turns : null;
+
+                return {
+                    name,
+                    skill: skillRatings[name] && skillRatings[name].games >= SR_MIN_GAMES ? skillRatings[name].display : null,
+                    skillDelta: skillDelta[name] ?? null,
+                    wins,
+                    gamesPlayed,
+                    winRate: gamesPlayed ? wins / gamesPlayed : 0,
+                    avgSurvival,
+                    eliminations,
+                    eliminationsPerGame: gamesPlayed ? eliminations / gamesPlayed : 0,
+                    avgTurnSeconds
+                };
+            });
+        }
+
+        function rebuildStats() {
+            const note = document.getElementById('scope-note');
+            document.querySelectorAll('.scope-toggle button').forEach(b => {
+                b.setAttribute('aria-pressed', String(b.dataset.scope === statsScope));
+            });
+
+            if (statsScope === 'all') {
+                if (!history) {
+                    note.textContent = historyError ? 'Could not load historical games.' : 'Loading historical games…';
+                    if (!historyError) loadHistory().then(rebuildStats);
+                    statsRows = computePlayerStats(eraFinishedGames, {});
+                    renderStatsTable();
+                    return;
+                }
+                // Era games come from the live tracker, history from the backfill.
+                // They're split on the era date server-side; dedupe anyway.
+                const byId = new Map();
+                history.games.forEach(g => byId.set(String(g.gameid), g));
+                eraFinishedGames.forEach(g => byId.set(String(g.gameid), g));
+                const games = [...byId.values()];
+                const pre = games.length - eraFinishedGames.length;
+                note.textContent = `${games.length} finished games (${pre} before the Tracker Era). Avg turn time is only measured for games the tracker watched live.`
+                    + (history.complete ? '' : ' Historical backfill still running, so more games will appear.');
+                statsRows = computePlayerStats(games, {});
+            } else {
+                note.textContent = '';
+                statsRows = computePlayerStats(eraFinishedGames, eraTurnStats);
+            }
+            renderStatsTable();
+        }
+
+        document.querySelectorAll('.scope-toggle button').forEach(b => {
+            b.addEventListener('click', () => {
+                if (statsScope === b.dataset.scope) return;
+                statsScope = b.dataset.scope;
+                try { localStorage.setItem('statsScope', statsScope); } catch {}
+                rebuildStats();
+            });
+        });
+
         async function loadDashboard() {
             try {
                 const [dashRes, turnStatsRes] = await Promise.all([
@@ -636,10 +776,6 @@
                 playerColorHex = tallyPlayerColors(allGames);
 
                 let activeTurnsGames = {};
-                let winCount = {};
-                let gamesPlayedCount = {};
-                let survivalTurns = {};
-                let eliminationCount = {};
                 const nowSeconds = Date.now() / 1000;
                 let liveHtml = '';
                 let archiveHtml = '';
@@ -683,35 +819,8 @@
                         });
                     }
 
-                    // Tally Wins (Only for Tracker Era finished games)
-                    if (isFinished && Array.isArray(game.winners)) {
-                        game.winners.filter(w => w !== null).forEach(w => {
-                            winCount[w] = (winCount[w] || 0) + 1;
-                        });
-                    }
-
                     // Build Roster
                     let players = game.players ? Object.values(game.players).filter(p => p && p.name).sort((a, b) => a.seat - b.seat) : [];
-                    let seatToName = {};
-                    players.forEach(p => { seatToName[p.seat] = p.name; });
-
-                    // All player stats (games played, survival, eliminations) are
-                    // Tracker Era finished games only - live games can still flip.
-                    if (isFinished) {
-                        players.forEach(p => {
-                            gamesPlayedCount[p.name] = (gamesPlayedCount[p.name] || 0) + 1;
-
-                            let isEliminated = ['Eliminated', 'Booted', 'Surrendered'].includes(p.status) || !!p.eliminated_by;
-                            if (isEliminated && typeof p.turn_counter === 'number') {
-                                if (!survivalTurns[p.name]) survivalTurns[p.name] = [];
-                                survivalTurns[p.name].push(p.turn_counter);
-                            }
-                            if (p.eliminated_by && seatToName[p.eliminated_by] && seatToName[p.eliminated_by] !== p.name) {
-                                const killer = seatToName[p.eliminated_by];
-                                eliminationCount[killer] = (eliminationCount[killer] || 0) + 1;
-                            }
-                        });
-                    }
 
                     // Elimination status is only public information in-game under
                     // None/Light fog (full-board visibility) - under Medium/Heavy
@@ -790,43 +899,12 @@
                 clockData = activeTurnsGames;
                 renderClockShell();
 
-                // Build the combined per-player stats table
-                const { ratings: skillRatings, lastDelta: skillDelta } =
-                    computeSkillRatings(validGames.filter(g => g.gamestatus === 'Finished'));
-
-                let allNames = new Set([
-                    ...Object.keys(winCount),
-                    ...Object.keys(gamesPlayedCount),
-                    ...Object.keys(survivalTurns),
-                    ...Object.keys(eliminationCount),
-                    ...Object.keys(turnStats),
-                    ...Object.keys(skillRatings)
-                ]);
-
-                statsRows = Array.from(allNames).map(name => {
-                    const wins = winCount[name] || 0;
-                    const gamesPlayed = gamesPlayedCount[name] || 0;
-                    const eliminations = eliminationCount[name] || 0;
-                    const survivals = survivalTurns[name] || [];
-                    const avgSurvival = survivals.length ? survivals.reduce((a, b) => a + b, 0) / survivals.length : null;
-                    const ts = turnStats[name];
-                    const avgTurnSeconds = ts && ts.turns ? ts.total_seconds / ts.turns : null;
-
-                    return {
-                        name,
-                        skill: skillRatings[name] && skillRatings[name].games >= SR_MIN_GAMES ? skillRatings[name].display : null,
-                        skillDelta: skillDelta[name] ?? null,
-                        wins,
-                        gamesPlayed,
-                        winRate: gamesPlayed ? wins / gamesPlayed : 0,
-                        avgSurvival,
-                        eliminations,
-                        eliminationsPerGame: gamesPlayed ? eliminations / gamesPlayed : 0,
-                        avgTurnSeconds
-                    };
-                });
-
-                renderStatsTable();
+                // Player stats are built from finished games only (live games can
+                // still flip); the scope toggle decides whether pre-era history joins in.
+                eraFinishedGames = validGames.filter(g => g.gamestatus === 'Finished');
+                eraTurnStats = turnStats;
+                if (statsScope === 'all' && history && !history.complete) loadHistory(true).then(rebuildStats);
+                rebuildStats();
                 renderFreshness();
 
             } catch (err) {

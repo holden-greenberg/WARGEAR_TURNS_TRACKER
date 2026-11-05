@@ -56,6 +56,8 @@ The site is then live at
 | Rotate an API key | `npx wrangler secret put PLAYERS_CONFIG`, redeploy not needed |
 | Inspect state | `npx wrangler kv key get --binding WG_STATE state` |
 | Ship a frontend change | edit `public/index.html`, `npx wrangler deploy` |
+| Step the history backfill now | `curl .../__backfill` |
+| Restart the history backfill | `npx wrangler kv key delete --binding WG_STATE history_meta` |
 
 ## Notes
 
@@ -71,3 +73,12 @@ The site is then live at
   every poll.
 - **Tracker Era.** Finished games before 2026-09-02 00:00 UTC are ignored
   (`TRACKER_ERA_START` in `worker/index.js`).
+- **Historical backfill ("All time" stats).** Each cron tick, after the sync, the
+  Worker reads up to 10 more of every configured player's Finished pages (oldest
+  first) and stores the pre-era games with at least `MIN_CORE_PLAYERS` core
+  players, deduplicated by `gameid` across players. It finishes on its own and then
+  costs one small KV read per tick. Games are stored apart from `state` in
+  `history_meta` and append-only `history_chunk_<n>` keys, and served at
+  `/data/history.json`. Only players whose API key is in `PLAYERS_CONFIG` can be
+  scanned, so a game that none of them played in can't be found. Avg turn time
+  stays Tracker Era only, because it's measured from live polls.

@@ -275,15 +275,8 @@ function parseJsonEnv(value, fallback) {
   }
 }
 
-async function runSync(env) {
-  const players = parseJsonEnv(env.PLAYERS_CONFIG, []);
-  const coreSet = new Set(
-    (env.CORE_PLAYERS || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-  );
-  const minCore = parseInt(env.MIN_CORE_PLAYERS || "2", 10) || 2;
+async function runSync(env, budget = newBudget()) {
+  const { players, coreSet, minCore } = readConfig(env);
 
   const prev = { ...EMPTY_STATE, ...(await env.WG_STATE.get("state", "json")) };
   const prevSerialized = stableState(prev);
@@ -296,7 +289,6 @@ async function runSync(env) {
   const finalized = new Set(prev.finalized || []);
   const cursors = { ...(prev.cursors || {}) };
 
-  const budget = newBudget();
   const allGames = {};
 
   for (let i = 0; i < players.length; i += 1) {
@@ -454,6 +446,163 @@ function sectionSignatures(s) {
   };
 }
 
+// --- historical backfill ---------------------------------------------------
+//
+// Pre-Tracker-Era finished games, for the site's "All time" stats toggle. A
+// one-off, resumable scan: each run reads a few more of every configured
+// player's Finished pages (oldest first) and keeps the pre-era games that pass
+// the same core-player check as the live tracker. Players share most games,
+// so games are deduplicated by gameid across everyone's history.
+//
+// Storage is kept apart from "state" so the 5-minute sync never has to parse
+// or diff it:
+//   history_meta      small: per-player cursor + every stored gameid
+//   history_chunk_<n> a JSON array of the slim games one run found; append-only
+// /data/history.json concatenates the chunks without parsing them.
+// Delete history_meta to start the backfill over.
+
+const HISTORY_META_KEY = "history_meta";
+const HISTORY_CHUNK_PREFIX = "history_chunk_";
+// Kept low so the extra JSON parsing stays inside the Workers Free CPU limit.
+const BACKFILL_PAGES_PER_RUN = 10;
+// A page that fails this many runs in a row (no repeat page seen) is treated
+// as the end of that player's history.
+const BACKFILL_MAX_FAILS = 3;
+
+async function playerKeyId(apiKey) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(apiKey));
+  return [...new Uint8Array(digest).slice(0, 6)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Only what the stats table needs; old games are never shown as live cards.
+function slimHistoricGame(g) {
+  const players = {};
+  for (const [k, p] of Object.entries(g.players || {})) {
+    if (!p || typeof p !== "object" || !p.name) continue;
+    players[k] = {
+      name: p.name,
+      seat: p.seat,
+      status: p.status,
+      eliminated_by: p.eliminated_by,
+      turn_counter: p.turn_counter,
+      color_code: p.color_code,
+    };
+  }
+  return {
+    gameid: g.gameid,
+    name: g.name,
+    gamestatus: g.gamestatus,
+    teamplay: g.teamplay,
+    boardname: g.boardname,
+    startstamp: g.startstamp,
+    createstamp: g.createstamp,
+    endstamp: g.endstamp,
+    winners: g.winners,
+    players,
+  };
+}
+
+function readConfig(env) {
+  const players = parseJsonEnv(env.PLAYERS_CONFIG, []);
+  const coreSet = new Set(
+    (env.CORE_PLAYERS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+  const minCore = parseInt(env.MIN_CORE_PLAYERS || "2", 10) || 2;
+  return { players, coreSet, minCore };
+}
+
+async function runBackfill(env, budget) {
+  const { players, coreSet, minCore } = readConfig(env);
+  const meta = (await env.WG_STATE.get(HISTORY_META_KEY, "json")) || {};
+  meta.players ||= {};
+  meta.game_ids ||= [];
+  meta.chunks ||= 0;
+
+  const keys = [];
+  for (const p of players) if (p?.api_key) keys.push({ apiKey: p.api_key, id: await playerKeyId(p.api_key) });
+  const todo = keys.filter((k) => !meta.players[k.id]?.done);
+  if (todo.length === 0) {
+    return { done: true, games: meta.game_ids.length };
+  }
+
+  const pageCap = Math.min(budget.max, budget.used + BACKFILL_PAGES_PER_RUN);
+  const local = { used: budget.used, max: pageCap };
+  const seen = new Set(meta.game_ids);
+  const found = [];
+  let pagesRead = 0;
+
+  for (const { apiKey, id } of todo) {
+    const cur = (meta.players[id] ||= { next_page: 1, last_sig: null, fails: 0, done: false });
+    while (local.used < local.max) {
+      const before = local.used;
+      const data = await fetchPage(apiKey, "Finished", cur.next_page, local);
+      if (!data) {
+        if (local.used === before) break; // budget spent before the fetch: not a failure
+        cur.fails += 1;
+        if (cur.fails >= BACKFILL_MAX_FAILS) cur.done = true;
+        break;
+      }
+      pagesRead += 1;
+      cur.fails = 0;
+      const sig = pageSignature(data);
+      if (sig === cur.last_sig) {
+        // Past the last page the API repeats the final one.
+        cur.done = true;
+        break;
+      }
+      for (const raw of data) {
+        const g0 = raw && typeof raw === "object" && "games" in raw && !raw.gameid ? raw.games : raw;
+        const gameId = String(g0?.gameid ?? "");
+        if (!gameId || seen.has(gameId)) continue;
+        const game = normalizeGame(g0);
+        if (game.gamestatus !== "Finished") continue;
+        if (!game.endstamp || game.endstamp >= TRACKER_ERA_START) continue;
+        if (countCorePlayers(game, coreSet) < minCore) continue;
+        seen.add(gameId);
+        found.push(slimHistoricGame(game));
+      }
+      cur.last_sig = sig;
+      cur.next_page += 1;
+    }
+    if (local.used >= local.max) break;
+  }
+  budget.used = local.used;
+
+  if (found.length) {
+    await env.WG_STATE.put(HISTORY_CHUNK_PREFIX + meta.chunks, JSON.stringify(found));
+    meta.chunks += 1;
+    meta.game_ids = [...seen];
+  }
+  meta.updated = Math.floor(Date.now() / 1000);
+  const done = keys.every((k) => meta.players[k.id]?.done);
+  meta.done = done;
+  await env.WG_STATE.put(HISTORY_META_KEY, JSON.stringify(meta));
+  return { done, pages: pagesRead, new_games: found.length, games: meta.game_ids.length };
+}
+
+async function handleHistoryRoute(env) {
+  const meta = (await env.WG_STATE.get(HISTORY_META_KEY, "json")) || {};
+  const n = meta.chunks || 0;
+  const chunks = await Promise.all(
+    Array.from({ length: n }, (_, i) => env.WG_STATE.get(HISTORY_CHUNK_PREFIX + i))
+  );
+  // Each chunk is a JSON array; splice them together without parsing.
+  const inner = chunks
+    .filter((c) => c && c.length > 2)
+    .map((c) => c.slice(1, -1))
+    .join(",");
+  const body = `{"complete":${meta.done ? "true" : "false"},"updated":${meta.updated || 0},"games":[${inner}]}`;
+  return new Response(body, {
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": meta.done ? "public, max-age=3600, s-maxage=3600" : "public, max-age=60, s-maxage=120",
+    },
+  });
+}
+
 // --- HTTP -------------------------------------------------------------
 
 function jsonResponse(payload) {
@@ -505,6 +654,10 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/data/history.json") {
+      return handleHistoryRoute(env);
+    }
+
     if (url.pathname.startsWith("/data/")) {
       const res = await handleDataRoute(url.pathname, env);
       if (res) return res;
@@ -518,15 +671,34 @@ export default {
       return jsonResponse(result);
     }
 
+    // Manual backfill step (same no-auth reasoning as /__resync). Each call
+    // reads up to BACKFILL_PAGES_PER_RUN more pages; the cron also runs it.
+    if (url.pathname === "/__backfill") {
+      const result = await runBackfill(env, newBudget());
+      return new Response(JSON.stringify(result), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+    }
+
     return env.ASSETS.fetch(request);
   },
 
   async scheduled(event, env, ctx) {
+    // Sync first; the backfill only gets whatever page budget is left, and a
+    // backfill failure can never affect the live dashboard.
+    const budget = newBudget();
     ctx.waitUntil(
-      runSync(env).then(
-        (r) => console.log(`sync ok: ${JSON.stringify(r)}`),
-        (e) => console.log(`sync failed: ${e && e.stack ? e.stack : e}`)
-      )
+      (async () => {
+        try {
+          console.log(`sync ok: ${JSON.stringify(await runSync(env, budget))}`);
+        } catch (e) {
+          console.log(`sync failed: ${e && e.stack ? e.stack : e}`);
+        }
+        try {
+          const r = await runBackfill(env, budget);
+          if (!r.done || r.pages) console.log(`backfill: ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.log(`backfill failed: ${e && e.stack ? e.stack : e}`);
+        }
+      })()
     );
   },
 };
