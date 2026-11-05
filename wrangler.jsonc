@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "wargear-turns-tracker",
   "main": "worker/index.js",
+  "account_id": "56b4df8495c58873ab239efdf2c012a1",
   "compatibility_date": "2025-09-01",
 
   "workers_dev": true,
