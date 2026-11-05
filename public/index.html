@@ -179,7 +179,7 @@
             <tbody id="stats-tbody"><tr><td colspan="8">Loading...</td></tr></tbody>
         </table>
     </div>
-    <div id="skill-tip" role="tooltip" hidden><strong>Skill Rating</strong> estimates how strong each player is, from every finished Tracker Era game. What counts is where you finish: winning is best, and if you don't win, lasting more turns than the other losers still helps. Beating a higher-rated opponent is worth more than beating a weaker one. New players start low and climb as the rating grows more confident in them. The &#9650;&#9660; shows how much your most recent game moved it.</div>
+    <div id="skill-tip" role="tooltip" hidden><strong>Skill Rating</strong> scores every finished Tracker Era game. <strong>Winning</strong> counts most, and a win against more players is worth more. You also earn a smaller bonus for <strong>surviving</strong> longer than the table average and for <strong>eliminating</strong> more players than average. Your average is pulled toward 1000 until you have played enough games, and you need 5 games to be ranked. Opponent strength isn't counted. The &#9650;&#9660; shows how much your most recent game moved it.</div>
 
     <div class="section-head"><h2>Live Games</h2><span class="section-updated" id="upd-live"></span></div>
     <div class="grid" id="live-grid"></div>
@@ -469,96 +469,68 @@
         let statsRows = [];
         let sortState = { key: 'skill', dir: -1 };
 
-        // Skill Rating: an OpenSkill / Weng-Lin (Bradley-Terry, full pairing)
-        // model. Each finished game is treated as a free-for-all ranking -
-        // winners first, then everyone else ordered by how many turns they
-        // survived. Every player carries a skill estimate (mu) and an
-        // uncertainty (sigma); playing more games shrinks sigma. The number
-        // shown in the table is the conservative estimate mu - 3*sigma,
-        // rescaled to an Elo-like band, so an unproven player ranks low and
-        // rises only as the model grows confident in them. Beating a
-        // higher-rated opponent moves the rating more than beating a weaker
-        // one, and one big free-for-all no longer counts as several games.
-        const SR_MU0 = 25;
-        const SR_SIGMA0 = 25 / 3;
-        const SR_BETA_SQ = (SR_SIGMA0 / 2) ** 2;   // matchup randomness
-        const SR_TAU_SQ = (SR_SIGMA0 / 100) ** 2;  // per-game uncertainty bump
-        const SR_KAPPA = 0.0001;                    // floor on sigma shrink
-        const SR_Z = 3;                             // conservatism (mu - Z*sigma)
-        const srDisplay = (mu, sigma) => Math.round((mu - SR_Z * sigma) * 24 + 1000);
+        // Skill Rating: a points system for finished, free-for-all Tracker Era
+        // games. It deliberately ignores opponent strength: this group is too
+        // small, and plays each other too much, for that to be measurable.
+        // Per game, with n = number of players:
+        //   win/loss     +sqrt(n-1) for a win, -1/sqrt(n-1) for a loss, so an
+        //                average player expects 0 at any field size and bigger
+        //                wins are worth more
+        //   survival     your share of the winner's turns (capped at 1), minus
+        //                the game's average share
+        //   eliminations +0.1 per elimination, minus the game's average
+        // Rating = 1000 + 400 * (total points / (games + SR_GHOST_GAMES)). The
+        // ghost games pull small samples toward 1000, and a player needs
+        // SR_MIN_GAMES to be ranked. Weights were backtested on 30 games; see the
+        // commit message.
+        const SR_GHOST_GAMES = 8;
+        const SR_MIN_GAMES = 5;
+        const SR_ELIM_WEIGHT = 0.1;
+        const srDisplay = (points, games) => Math.round(1000 + 400 * points / (games + SR_GHOST_GAMES));
 
-        // Returns { ratings: {name: {mu, sigma, display}}, lastDelta: {name: n} }
-        // where lastDelta is the change in display rating from that player's
-        // most recent finished game.
+        // Returns { ratings: {name: {display, games}}, lastDelta: {name: n} } where
+        // lastDelta is the rating change from that player's most recent game.
         function computeSkillRatings(finishedGames) {
-            const state = {};      // name -> { mu, sigma }
-            const lastDelta = {};  // name -> display-rating change from last game
+            const totals = {};     // name -> { points, games }
+            const lastDelta = {};
             const games = [...finishedGames].sort((a, b) => (a.endstamp || 0) - (b.endstamp || 0));
 
             games.forEach(game => {
+                if (game.teamplay === 'Teamplay') return;
                 const players = game.players ? Object.values(game.players).filter(p => p && p.name) : [];
-                if (players.length < 2) return;
-
+                const n = players.length;
                 const winners = new Set(Array.isArray(game.winners) ? game.winners.filter(w => w !== null) : []);
-                const entries = players.map(p => ({
-                    name: p.name,
-                    isWinner: winners.has(p.name) ? 1 : 0,
-                    survival: typeof p.turn_counter === 'number' ? p.turn_counter : -1
-                }));
-                // Finish order: winners, then by turns survived (desc). rank 0 = best.
-                entries.sort((a, b) => (b.isWinner - a.isWinner) || (b.survival - a.survival));
-                let rank = 0;
-                entries.forEach((e, idx) => {
-                    if (idx > 0) {
-                        const prev = entries[idx - 1];
-                        if (prev.isWinner !== e.isWinner || prev.survival !== e.survival) rank = idx;
-                    }
-                    e.rank = rank;
+                const winner = players.find(p => winners.has(p.name));
+                if (n < 2 || !winner) return;
+
+                const seatToName = {};
+                players.forEach(p => { seatToName[p.seat] = p.name; });
+                const kills = {};
+                players.forEach(p => {
+                    const killer = seatToName[p.eliminated_by];
+                    if (killer && killer !== p.name) kills[killer] = (kills[killer] || 0) + 1;
                 });
 
-                entries.forEach(e => {
-                    if (!state[e.name]) state[e.name] = { mu: SR_MU0, sigma: SR_SIGMA0 };
-                });
-                const before = {};
-                entries.forEach(e => { before[e.name] = srDisplay(state[e.name].mu, state[e.name].sigma); });
+                // Turn order lets losers log a turn more than the winner, so the
+                // winner's turn count defines a full game.
+                const fullGame = Number(winner.turn_counter) || 1;
+                const share = p => Math.min(1, (Number(p.turn_counter) || 0) / fullGame);
+                const avgShare = players.reduce((sum, p) => sum + share(p), 0) / n;
+                const avgKills = Object.values(kills).reduce((sum, k) => sum + k, 0) / n;
 
-                // Bradley-Terry, full pairing. Add per-game uncertainty (tau) first.
-                const work = entries.map(e => ({
-                    name: e.name,
-                    rank: e.rank,
-                    mu: state[e.name].mu,
-                    sigmaSq: state[e.name].sigma ** 2 + SR_TAU_SQ
-                }));
-                const next = {};
-                work.forEach(a => {
-                    let omega = 0, delta = 0;
-                    work.forEach(b => {
-                        if (a === b) return;
-                        const c = Math.sqrt(a.sigmaSq + b.sigmaSq + 2 * SR_BETA_SQ);
-                        const expA = 1 / (1 + Math.exp((b.mu - a.mu) / c));
-                        const score = a.rank < b.rank ? 1 : a.rank > b.rank ? 0 : 0.5;
-                        const gamma = Math.sqrt(a.sigmaSq) / c;
-                        omega += (a.sigmaSq / c) * (score - expA);
-                        delta += (gamma * a.sigmaSq / (c * c)) * expA * (1 - expA);
-                    });
-                    const muNew = a.mu + omega;
-                    const sigmaSqNew = a.sigmaSq * Math.max(1 - delta, SR_KAPPA);
-                    next[a.name] = { mu: muNew, sigma: Math.sqrt(sigmaSqNew) };
-                });
-
-                entries.forEach(e => {
-                    state[e.name] = next[e.name];
-                    lastDelta[e.name] = srDisplay(next[e.name].mu, next[e.name].sigma) - before[e.name];
+                players.forEach(p => {
+                    const t = totals[p.name] || (totals[p.name] = { points: 0, games: 0 });
+                    const before = srDisplay(t.points, t.games);
+                    const result = winners.has(p.name) ? Math.sqrt(n - 1) : -1 / Math.sqrt(n - 1);
+                    t.points += result + (share(p) - avgShare) + SR_ELIM_WEIGHT * ((kills[p.name] || 0) - avgKills);
+                    t.games += 1;
+                    lastDelta[p.name] = srDisplay(t.points, t.games) - before;
                 });
             });
 
             const ratings = {};
-            Object.keys(state).forEach(name => {
-                ratings[name] = {
-                    mu: state[name].mu,
-                    sigma: state[name].sigma,
-                    display: srDisplay(state[name].mu, state[name].sigma)
-                };
+            Object.keys(totals).forEach(name => {
+                ratings[name] = { display: srDisplay(totals[name].points, totals[name].games), games: totals[name].games };
             });
             return { ratings, lastDelta };
         }
@@ -594,7 +566,7 @@
 
             tbody.innerHTML = sorted.length ? sorted.map((r, i) => `
                 <tr>
-                    <td class="name-cell"><div class="name-cell-inner"><span class="rank-num">${i + 1}</span>${avatarHtml(r.name)}<span>${r.name}</span></div></td>
+                    <td class="name-cell"><div class="name-cell-inner"><span class="rank-num">${key === 'skill' && r.skill === null ? '–' : i + 1}</span>${avatarHtml(r.name)}<span>${r.name}</span></div></td>
                     <td class="skill-cell" style="${r.skill !== null ? ratingColor(r.skill, minSkill, maxSkill) : ''}">${r.skill !== null ? `<span class="skill-num">${Math.round(r.skill)}</span><span class="skill-delta-wrap">${deltaBadge(r.skillDelta)}</span>` : '—'}</td>
                     <td>${r.wins}</td>
                     <td>${r.gamesPlayed ? Math.round(r.winRate * 100) + '%' : '—'}</td>
@@ -842,7 +814,7 @@
 
                     return {
                         name,
-                        skill: skillRatings[name] ? skillRatings[name].display : null,
+                        skill: skillRatings[name] && skillRatings[name].games >= SR_MIN_GAMES ? skillRatings[name].display : null,
                         skillDelta: skillDelta[name] ?? null,
                         wins,
                         gamesPlayed,
